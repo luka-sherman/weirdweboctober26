@@ -249,7 +249,6 @@
   // October 1, 2026 is a Thursday (index 4, Sun = 0)
   const firstWeekday = 4;
   const daysInMonth = 31;
-  const builtDays = 3; // pages exist for days 1..builtDays; rest are placeholders
 
   const calendar = document.getElementById("calendar");
 
@@ -278,14 +277,23 @@
 
   const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+  // A day's cell becomes clickable once its page actually exists on
+  // disk (e.g. a ./reveal/ folder) rather than a hardcoded day count.
+  async function pageExists(slug) {
+    try {
+      const res = await fetch("./" + slug + "/", { method: "HEAD" });
+      return res.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
   for (let d = 1; d <= daysInMonth; d++) {
     const word = days[d];
     const slug = word.toLowerCase().replace(/\s+/g, "-");
-    const built = d <= builtDays;
 
-    const cell = document.createElement(built ? "a" : "div");
-    cell.className = built ? "cell built" : "cell";
-    if (built) cell.href = "./" + slug + "/";
+    const cell = document.createElement("a");
+    cell.className = "cell";
 
     const weekdayLabel = document.createElement("div");
     weekdayLabel.className = "weekday-label";
@@ -300,12 +308,19 @@
     const wordEl = document.createElement("div");
     wordEl.className = "word";
     const textEl = document.createElement("span");
-    textEl.className = built ? "word-text" : "unbuilt";
+    textEl.className = "unbuilt";
     textEl.textContent = word;
     wordEl.appendChild(textEl);
     cell.appendChild(wordEl);
 
     calendar.appendChild(cell);
+
+    pageExists(slug).then((exists) => {
+      if (!exists) return;
+      cell.href = "./" + slug + "/";
+      cell.classList.add("built");
+      textEl.className = "word-text";
+    });
   }
 
   // Shrink or grow each day's word to best fill its cell, since word
