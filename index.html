@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>weird web october 2026</title>
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #111;
+    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    text-align: center;
+    padding: 1.25rem 0 0.5rem;
+    flex: none;
+  }
+  header h1 {
+    margin: 0;
+    font-size: clamp(1.1rem, 2.5vw, 1.8rem);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    flex: none;
+    padding: 0.5rem 0 0;
+    gap: 2px;
+  }
+  .weekdays div {
+    text-align: center;
+    font-size: clamp(0.6rem, 1.2vw, 0.85rem);
+    opacity: 0.55;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-bottom: 0.25rem;
+  }
+  .calendar {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    grid-auto-rows: 1fr;
+    gap: 0;
+    padding: 0;
+    min-height: 0;
+  }
+  .cell {
+    position: relative;
+    display: block;
+    border: 1px solid rgba(255,255,255,0.12);
+    overflow: hidden;
+    background: rgba(255,255,255,0.02);
+    color: inherit;
+    text-decoration: none;
+  }
+  .cell.empty {
+    border-color: transparent;
+    background: transparent;
+  }
+  .cell.intro {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0.9rem 1.1rem;
+    overflow-y: auto;
+  }
+  .intro-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 1.25rem;
+    width: 100%;
+  }
+  .intro-link {
+    flex: none;
+    color: #ff8a3d;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: clamp(0.65rem, 1.1vw, 0.85rem);
+    white-space: nowrap;
+  }
+  .intro-link:hover { text-decoration: underline; }
+  .intro-block {
+    flex: 1;
+    min-width: 0;
+  }
+  .intro-block h2 {
+    margin: 0 0 0.2rem;
+    font-size: clamp(0.75rem, 1.3vw, 1rem);
+    font-weight: 600;
+  }
+  .intro-block p {
+    margin: 0;
+    font-size: clamp(0.65rem, 1.05vw, 0.85rem);
+    line-height: 1.4;
+    opacity: 0.7;
+  }
+  @media (max-width: 900px) {
+    .intro-row {
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+  }
+  .date {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.5rem;
+    font-size: clamp(0.65rem, 1.3vw, 0.95rem);
+    opacity: 0.45;
+    font-variant-numeric: tabular-nums;
+  }
+  .weekday-label {
+    display: none;
+    position: absolute;
+    top: 0.3rem;
+    left: 0.5rem;
+    font-size: clamp(0.6rem, 1.2vw, 0.8rem);
+    opacity: 0.45;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .intro-banner {
+    display: none;
+    flex: none;
+    padding: 0.75rem 1rem 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+  }
+  .intro-banner .intro-row {
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  @media (max-width: 640px) {
+    .weekdays { display: none; }
+    .cell.intro { display: none; }
+    .intro-banner { display: block; }
+    .calendar {
+      grid-template-columns: 1fr;
+      grid-auto-rows: minmax(4.5rem, auto);
+      overflow-y: auto;
+    }
+    .weekday-label { display: block; }
+  }
+  .word {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0.5rem;
+  }
+  .word-text {
+    font-weight: 600;
+    font-size: clamp(0.65rem, 1.7vw, 1.2rem);
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    transition: color 0.15s ease;
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
+  }
+  .word .unbuilt {
+    font-weight: 600;
+    font-size: clamp(0.65rem, 1.7vw, 1.2rem);
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    opacity: 0.35;
+  }
+  .cell.built:hover {
+    border-color: #5c1f06;
+    animation: jacko-flicker 4s infinite ease-in-out;
+  }
+  @keyframes jacko-flicker {
+    0%   { background-color: #7a2a0c; box-shadow: inset 0 0 20px 3px rgba(122,42,12,0.5); }
+    13%  { background-color: #96530f; box-shadow: inset 0 0 22px 4px rgba(150,83,15,0.55); }
+    15%  { background-color: #5c1f06; box-shadow: inset 0 0 18px 3px rgba(92,31,6,0.45); }
+    31%  { background-color: #8a330e; box-shadow: inset 0 0 23px 4px rgba(138,51,14,0.55); }
+    34%  { background-color: #7a2a0c; box-shadow: inset 0 0 20px 3px rgba(122,42,12,0.5); }
+    52%  { background-color: #451705; box-shadow: inset 0 0 16px 2px rgba(69,23,5,0.4); }
+    55%  { background-color: #70280b; box-shadow: inset 0 0 21px 3px rgba(112,40,11,0.5); }
+    71%  { background-color: #7a2a0c; box-shadow: inset 0 0 20px 3px rgba(122,42,12,0.5); }
+    73%  { background-color: #823010; box-shadow: inset 0 0 23px 4px rgba(130,48,16,0.55); }
+    79%  { background-color: #6b1208; box-shadow: inset 0 0 17px 2px rgba(107,18,8,0.45); }
+    90%  { background-color: #a66312; box-shadow: inset 0 0 22px 4px rgba(166,99,18,0.55); }
+    92%  { background-color: #622208; box-shadow: inset 0 0 19px 3px rgba(98,34,8,0.48); }
+    97%  { background-color: #7a150a; box-shadow: inset 0 0 21px 4px rgba(122,21,10,0.52); }
+    100% { background-color: #7a2a0c; box-shadow: inset 0 0 20px 3px rgba(122,42,12,0.5); }
+  }
+  .cell.built:hover .date {
+    color: #ffe3c9;
+    opacity: 0.7;
+  }
+  .cell.built:hover .word-text {
+    color: #fff;
+  }
+  @media (max-width: 700px) {
+    .weekdays div { font-size: 0.55rem; }
+    .date { top: 0.15rem; right: 0.3rem; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>weird web october 2026</h1>
+</header>
+<div class="weekdays">
+  <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+</div>
+<div class="intro-banner" id="intro-banner"></div>
+<div class="calendar" id="calendar"></div>
+<script>
+  const days = [
+    null, "Reveal", "Spark", "Fake", "Plastic", "Sheet", "Analog", "Organic",
+    "Skeumorphism", "Spicy", "Layers", "Stuck", "Pointy", "Scratch", "Origami",
+    "Wooden", "Instant", "Branching", "Geometric", "Distorted", "Undefined",
+    "Illusion", "Skeletons", "Incognito", "Collage", "Ascending", "Net",
+    "Spiral", "Smooth", "The End", "Pastel", "Spooky"
+  ];
+
+  // October 1, 2026 is a Thursday (index 4, Sun = 0)
+  const firstWeekday = 4;
+  const daysInMonth = 31;
+  const builtDays = 3; // pages exist for days 1..builtDays; rest are placeholders
+
+  const calendar = document.getElementById("calendar");
+
+  const introRowHTML = `
+    <div class="intro-row">
+      <a class="intro-link" href="https://weirdweboctober.website" target="_blank" rel="noopener noreferrer">weirdweboctober.website</a>
+      <div class="intro-block">
+        <h2>What?</h2>
+        <p>Weird Web October is a challenge to try and make a website every day of October, based on the theme for each day, inspired by Inktober.</p>
+      </div>
+      <div class="intro-block">
+        <h2>Why?</h2>
+        <p>We want to bring back the WEIRD WEB. When people just put fun and silly stuff on the internet, not for followers or likes but just for the joy of making something and sharing it.</p>
+      </div>
+    </div>
+  `;
+
+  const intro = document.createElement("div");
+  intro.className = "cell intro";
+  intro.style.gridColumn = "1 / span " + firstWeekday;
+  intro.innerHTML = introRowHTML;
+  calendar.appendChild(intro);
+
+  const introBanner = document.getElementById("intro-banner");
+  introBanner.innerHTML = introRowHTML;
+
+  const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const word = days[d];
+    const slug = word.toLowerCase().replace(/\s+/g, "-");
+    const built = d <= builtDays;
+
+    const cell = document.createElement(built ? "a" : "div");
+    cell.className = built ? "cell built" : "cell";
+    if (built) cell.href = "./" + slug + "/";
+
+    const weekdayLabel = document.createElement("div");
+    weekdayLabel.className = "weekday-label";
+    weekdayLabel.textContent = weekdayNames[(firstWeekday + d - 1) % 7];
+    cell.appendChild(weekdayLabel);
+
+    const date = document.createElement("div");
+    date.className = "date";
+    date.textContent = d;
+    cell.appendChild(date);
+
+    const wordEl = document.createElement("div");
+    wordEl.className = "word";
+    const textEl = document.createElement("span");
+    textEl.className = built ? "word-text" : "unbuilt";
+    textEl.textContent = word;
+    wordEl.appendChild(textEl);
+    cell.appendChild(wordEl);
+
+    calendar.appendChild(cell);
+  }
+</script>
+</body>
+</html>
