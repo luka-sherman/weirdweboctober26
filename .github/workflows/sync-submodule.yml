@@ -1,0 +1,30 @@
+name: Sync submodule to lookaclick
+on:
+  push:
+    branches: [main]
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout lookaclick
+        uses: actions/checkout@v4
+        with:
+          repository: luka-sherman/lookaclick
+          token: ${{ secrets.LOOKACLICK_PAT }}
+
+      - name: Update submodule pointer
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git submodule update --init weirdweboctober26
+          cd weirdweboctober26
+          git fetch origin main
+          git checkout origin/main
+          cd ..
+          git add weirdweboctober26
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "auto: update weirdweboctober26 submodule"
+            git push
+          fi
