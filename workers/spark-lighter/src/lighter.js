@@ -51,12 +51,14 @@ export class Lighter {
         "lit",
         "litAt",
         "lastRefill",
+        "refillCount",
         "blockedIps",
       ]);
       this.fuelSeconds = stored.get("fuelSeconds") ?? FULL_TANK_BURN_SECONDS;
       this.lit = stored.get("lit") ?? false;
       this.litAt = stored.get("litAt") ?? null;
       this.lastRefill = stored.get("lastRefill") ?? null;
+      this.refillCount = stored.get("refillCount") ?? 0;
 
       const now = Date.now();
       const storedBlocks = stored.get("blockedIps") ?? {};
@@ -93,6 +95,7 @@ export class Lighter {
       lit: this.lit,
       litAt: this.litAt,
       lastRefill: this.lastRefill,
+      refillCount: this.refillCount,
     });
   }
 
@@ -144,6 +147,7 @@ export class Lighter {
       fuelPercent: Math.round((fuelSeconds / FULL_TANK_BURN_SECONDS) * 10000) / 100,
       fullTankBurnSeconds: FULL_TANK_BURN_SECONDS,
       lastRefill: this.lastRefill,
+      refillCount: this.refillCount,
       viewerCount,
       serverTime: now,
     };
@@ -215,11 +219,11 @@ export class Lighter {
       const blocked = await this.guard(request, ip, now);
       if (blocked) return blocked;
 
-      // Top-ups allowed below 99% — just not when it's already basically full.
+      // Only when empty (under a second left counts as empty, matching the
+      // whole-second fuelSeconds the clients see).
       const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
-      const fuelPercent = (fuelSeconds / FULL_TANK_BURN_SECONDS) * 100;
-      if (fuelPercent >= 99) {
-        return json({ error: "already_full", ...this.publicState(now, viewerCount) }, 409, this.env);
+      if (fuelSeconds >= 1) {
+        return json({ error: "not_empty", ...this.publicState(now, viewerCount) }, 409, this.env);
       }
 
       this.fuelSeconds = FULL_TANK_BURN_SECONDS;
@@ -232,6 +236,7 @@ export class Lighter {
         region: request.cf?.region ?? null,
         country: request.cf?.country ?? null,
       };
+      this.refillCount += 1;
       await this.persist();
       return json(this.publicState(now, viewerCount), 200, this.env);
     }

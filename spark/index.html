@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Looka | Share my lighter</title>
 <meta name="description" content="Open and spark my Zippo. The fuel is a communal reservoir that anyone can refill." />
-<link rel="preload" as="fetch" href="https://octothorp.es/?uri=https://looka.click/weirdweboctober26/spark">
+<link rel="preload" as="fetch" href="https://octothorp.es/?uri=https://looka.click/weirdweboctober26/spark/">
 <link rel="octo:octothorpes" href="Spark">
 <script src="https://octothorp.es/linkfill.js"></script>
 <style>
@@ -216,6 +216,27 @@
     color: #777;
     cursor: default;
   }
+  /* Disabled buttons swallow hover/title in some browsers, so the hint
+     hangs off a wrapper instead. */
+  #refillWrap { position: relative; }
+  #refillHint {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 0.4rem);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.3rem 0.6rem;
+    background: #111;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #eee;
+    font-family: monospace;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 5;
+  }
+  #refillWrap.locked:hover #refillHint { display: block; }
 </style>
 </head>
 <body>
@@ -256,8 +277,12 @@
         <span id="fuelLabel">--%</span>
       </div>
     </div>
-    <button id="btnRefillLive">refill lighter fluid</button>
+    <div id="refillWrap">
+      <button id="btnRefillLive">refill lighter fluid</button>
+      <span id="refillHint">wait until empty</span>
+    </div>
     <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
+    <p class="status-note">times refilled: <span id="refillCountText">0</span></p>
     <p class="status-note">lighters burning now: <span id="viewerCountText">1</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
@@ -339,6 +364,9 @@
     window.addEventListener("resize", syncFuelBarHeight);
 
     let isOpen = false; // drives which hotspot currently responds
+    // True only once *this* viewer has struck the wheel since opening, so a
+    // flame is never shown just because shared state says lit:true.
+    let struck = false;
 
     const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     function formatRefillTime(ms) {
@@ -359,7 +387,7 @@
         // Lit alone isn't enough — open/close is local-only, so a page
         // that loads and syncs lit:true from someone else's earlier
         // action shouldn't show a flame over a still-closed lid.
-        if (data.lit && isOpen) startFlameFlicker();
+        if (data.lit && isOpen && struck) startFlameFlicker();
         else stopFlameFlicker();
       }
       // Skipped entirely while a refill animation owns the bar (see
@@ -371,10 +399,13 @@
         $("fuelFill").style.height = pct;
         $("fuelIndicator").style.bottom = pct; // line + label ride the fill level
         $("fuelLabel").textContent = data.fuelPercent.toFixed(2) + "%";
-        // Matches the Worker's own gate — refill only accepted below 99%.
-        const alreadyFull = data.fuelPercent >= 99;
-        $("btnRefillLive").disabled = alreadyFull;
-        $("btnRefillLive").title = alreadyFull ? "already basically full" : "";
+        // Matches the Worker's own gate — refill only accepted when empty.
+        const notEmpty = data.fuelSeconds >= 1;
+        $("btnRefillLive").disabled = notEmpty;
+        $("refillWrap").classList.toggle("locked", notEmpty);
+      }
+      if (data && typeof data.refillCount === "number") {
+        $("refillCountText").textContent = data.refillCount;
       }
       if (data && "lastRefill" in data) {
         $("lastRefillText").textContent = formatRefillTime(
@@ -401,6 +432,7 @@
       lit: false,
       litAt: null,
       lastRefill: null,
+      refillCount: 0,
       fullTankBurnSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
       viewerCount: 1, // last known real count; reused for offline local math too
     };
@@ -418,6 +450,7 @@
         fuelPercent: Math.round((fuelSeconds / localState.fullTankBurnSeconds) * 10000) / 100,
         fullTankBurnSeconds: localState.fullTankBurnSeconds,
         lastRefill: localState.lastRefill,
+        refillCount: localState.refillCount,
         viewerCount: localState.viewerCount,
         serverTime: now,
       };
@@ -440,14 +473,14 @@
         return localPublicState(now);
       }
       if (path === "/refill" && method === "POST") {
-        // Top-ups allowed below 99% — just not when already basically full.
+        // Only when empty, same as the Worker.
         const fuelSeconds = localCurrentFuelSeconds(now);
-        const fuelPercent = (fuelSeconds / localState.fullTankBurnSeconds) * 100;
-        if (fuelPercent >= 99) return { error: "already_full", ...localPublicState(now) };
+        if (fuelSeconds >= 1) return { error: "not_empty", ...localPublicState(now) };
         localState.fuelSeconds = localState.fullTankBurnSeconds;
         localState.lit = false;
         localState.litAt = null;
         localState.lastRefill = { timestamp: now, city: "local", region: null, country: null };
+        localState.refillCount += 1;
         return localPublicState(now);
       }
       return { error: "not_found" };
@@ -461,6 +494,7 @@
       localState.lit = data.lit;
       localState.litAt = data.lit ? Date.now() : null;
       localState.lastRefill = data.lastRefill;
+      if (typeof data.refillCount === "number") localState.refillCount = data.refillCount;
       if (typeof data.viewerCount === "number") localState.viewerCount = data.viewerCount;
     }
 
@@ -564,13 +598,18 @@
       console.log("[spark] open target clicked, isOpen:", isOpen);
       if (isOpen) return;
       isOpen = true;
+      struck = false;
+      stopFlameFlicker();
       $("lighter").classList.add("is-open");
       playLidSwing("lid-swing-open");
+      // Opening never lights it — clear any leftover shared lit flag too.
+      if (localState.lit) call("/extinguish", "POST");
     });
     $("closeTarget").addEventListener("click", () => {
       console.log("[spark] close target clicked, isOpen:", isOpen);
       if (!isOpen) return;
       isOpen = false;
+      struck = false;
       $("lighter").classList.remove("is-open");
       playLidSwing("lid-swing-close");
       // Stop the flame immediately client-side rather than waiting up to
@@ -603,7 +642,10 @@
       swipeStartY = null;
       const threshold = $("lighter").getBoundingClientRect().height * SWIPE_DOWN_FRACTION;
       console.log("[spark] wheel swipe deltaY:", deltaY, "threshold:", threshold);
-      if (deltaY > threshold) call("/light", "POST");
+      if (deltaY > threshold) {
+        struck = true;
+        call("/light", "POST");
+      }
     });
     wheelTarget.addEventListener("pointercancel", () => {
       swipeStartY = null;
