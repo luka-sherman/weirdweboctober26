@@ -283,7 +283,7 @@
     </div>
     <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
     <p class="status-note">times refilled: <span id="refillCountText">0</span></p>
-    <p class="status-note">lighters burning now: <span id="viewerCountText">1</span><span id="offlineNote" hidden> (currently offline)</span></p>
+    <p class="status-note">lighters burning now: <span id="viewerCountText">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
 
@@ -412,12 +412,10 @@
           data.lastRefill ? data.lastRefill.timestamp : pageLoadTime
         );
       }
-      if (data && typeof data.viewerCount === "number") {
-        // The server's viewerCount is just "tabs currently open" — only
-        // meaningful as "burning now" while actually lit, so it reads 0
-        // otherwise. Gated here client-side, no server change needed.
-        $("viewerCountText").textContent = data.lit ? data.viewerCount : 0;
+      if (data && typeof data.litCount === "number") {
+        $("viewerCountText").textContent = data.litCount;
       }
+    }
     }
 
     // The display is driven entirely by a local clock-based simulation,
@@ -428,57 +426,60 @@
     const LOCAL_FULL_TANK_BURN_SECONDS = 900; // must match workers/spark-lighter/src/lighter.js
     const LOCAL_MAX_BURN_MULTIPLIER = 8; // must match MAX_BURN_MULTIPLIER server-side
     const localState = {
-      fuelSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
-      lit: false,
-      litAt: null,
+      fuelSeconds: LOCAL_FULL_TANK_BURN_SECONDS, // as of anchorAt
+      anchorAt: Date.now(),
+      lit: false, // this page's own lighter only
+      litCount: 0, // lighters lit across everyone, last known (incl. this one)
       lastRefill: null,
       refillCount: 0,
       fullTankBurnSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
-      viewerCount: 1, // last known real count; reused for offline local math too
     };
 
+    // Everyone's lit lighters draw from the one tank, so it drains whether
+    // or not this page's own lighter is lit.
     function localCurrentFuelSeconds(now) {
-      if (!localState.lit) return localState.fuelSeconds;
-      const multiplier = Math.max(1, Math.min(localState.viewerCount, LOCAL_MAX_BURN_MULTIPLIER));
-      return Math.max(0, localState.fuelSeconds - ((now - localState.litAt) / 1000) * multiplier);
+      const burning = Math.min(localState.litCount, LOCAL_MAX_BURN_MULTIPLIER);
+      return Math.max(0, localState.fuelSeconds - ((now - localState.anchorAt) / 1000) * burning);
+    }
+    function localAnchor(now) {
+      localState.fuelSeconds = localCurrentFuelSeconds(now);
+      localState.anchorAt = now;
+      if (localState.fuelSeconds <= 0) { localState.lit = false; localState.litCount = 0; }
     }
     function localPublicState(now) {
-      const fuelSeconds = localCurrentFuelSeconds(now);
+      localAnchor(now);
+      const fuelSeconds = localState.fuelSeconds;
       return {
-        lit: localState.lit && fuelSeconds > 0,
+        lit: localState.lit,
+        litCount: localState.litCount,
         fuelSeconds: Math.round(fuelSeconds),
         fuelPercent: Math.round((fuelSeconds / localState.fullTankBurnSeconds) * 10000) / 100,
         fullTankBurnSeconds: localState.fullTankBurnSeconds,
         lastRefill: localState.lastRefill,
         refillCount: localState.refillCount,
-        viewerCount: localState.viewerCount,
         serverTime: now,
       };
     }
     // Local mutations, used only when a real action call fails (offline).
     function localHandle(path, method) {
       const now = Date.now();
-      if (path === "/state") return localPublicState(now);
+      localAnchor(now);
+      if (path.startsWith("/state")) return localPublicState(now);
       if (path === "/light" && method === "POST") {
-        const fuelSeconds = localCurrentFuelSeconds(now);
-        if (fuelSeconds <= 0) {
-          localState.fuelSeconds = 0; localState.lit = false; localState.litAt = null;
-          return { error: "empty", ...localPublicState(now) };
-        }
-        if (!localState.lit) { localState.fuelSeconds = fuelSeconds; localState.lit = true; localState.litAt = now; }
+        if (localState.fuelSeconds <= 0) return { error: "empty", ...localPublicState(now) };
+        if (!localState.lit) { localState.lit = true; localState.litCount += 1; }
         return localPublicState(now);
       }
       if (path === "/extinguish" && method === "POST") {
-        if (localState.lit) { localState.fuelSeconds = localCurrentFuelSeconds(now); localState.lit = false; localState.litAt = null; }
+        if (localState.lit) { localState.lit = false; localState.litCount = Math.max(0, localState.litCount - 1); }
         return localPublicState(now);
       }
       if (path === "/refill" && method === "POST") {
         // Only when empty, same as the Worker.
-        const fuelSeconds = localCurrentFuelSeconds(now);
-        if (fuelSeconds >= 1) return { error: "not_empty", ...localPublicState(now) };
+        if (localState.fuelSeconds >= 1) return { error: "not_empty", ...localPublicState(now) };
         localState.fuelSeconds = localState.fullTankBurnSeconds;
         localState.lit = false;
-        localState.litAt = null;
+        localState.litCount = 0;
         localState.lastRefill = { timestamp: now, city: "local", region: null, country: null };
         localState.refillCount += 1;
         return localPublicState(now);
@@ -489,13 +490,14 @@
     // server's fuelSeconds is "as of" its own serverTime, so we treat our
     // own Date.now() right now as that same instant going forward.
     function seedFromServer(data) {
+      if (typeof data.fuelSeconds !== "number") return; // error body without state
       localState.fullTankBurnSeconds = data.fullTankBurnSeconds || LOCAL_FULL_TANK_BURN_SECONDS;
       localState.fuelSeconds = data.fuelSeconds;
+      localState.anchorAt = Date.now();
       localState.lit = data.lit;
-      localState.litAt = data.lit ? Date.now() : null;
+      localState.litCount = data.litCount;
       localState.lastRefill = data.lastRefill;
       if (typeof data.refillCount === "number") localState.refillCount = data.refillCount;
-      if (typeof data.viewerCount === "number") localState.viewerCount = data.viewerCount;
     }
 
     async function call(path, method = "GET") {
@@ -573,7 +575,8 @@
     // actions — the 100ms ticker in between still comes from local math,
     // not the network, so this is 4 requests/min per open tab, not 600.
     call("/state");
-    setInterval(() => call("/state"), 15000);
+    // A lit page re-asserts itself so the server keeps counting it.
+    setInterval(() => call(localState.lit ? "/state?lit=1" : "/state"), 15000);
 
     function playLidSwing(name) {
       const lid = $("lidImg");
@@ -602,8 +605,6 @@
       stopFlameFlicker();
       $("lighter").classList.add("is-open");
       playLidSwing("lid-swing-open");
-      // Opening never lights it — clear any leftover shared lit flag too.
-      if (localState.lit) call("/extinguish", "POST");
     });
     $("closeTarget").addEventListener("click", () => {
       console.log("[spark] close target clicked, isOpen:", isOpen);

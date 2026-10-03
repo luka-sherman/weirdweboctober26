@@ -8,15 +8,17 @@ const STRIKES_BEFORE_BLOCK = 5;
 // How long a block lasts once triggered.
 const BLOCK_DURATION_MS = 5 * 60 * 1000;
 
-// Presence/burn-rate: lazy and approximate by design, not exact. A viewer
-// counts as "here" if seen within this window — comfortably more than the
-// frontend's 15s poll interval so one missed beat doesn't drop them.
-const PRESENCE_TTL_MS = 40 * 1000;
-// Burn rate is just "how many viewers are here right now", applied flatly
-// to however much time has elapsed since the last checkpoint — no attempt
-// to track exactly when the count changed during that interval. Capped so
-// a traffic spike can't instantly empty the tank.
+// Each visitor lights or extinguishes their own lighter independently; they
+// all draw from the one shared tank. A visitor counts as "lit" until they
+// extinguish, or until we haven't heard from them for this long — lit pages
+// re-assert themselves on every 15s poll, so this is comfortably more than
+// one missed beat. Lazy and approximate by design.
+const LIT_TTL_MS = 40 * 1000;
+// Burn rate is how many lighters are lit right now, applied from the last
+// checkpoint to now. Capped so a traffic spike can't instantly empty the tank.
 const MAX_BURN_MULTIPLIER = 8;
+// Between polls, fuel progress is only written to storage this often.
+const PERSIST_EVERY_MS = 30 * 1000;
 
 function corsHeaders(env) {
   return {
@@ -41,22 +43,19 @@ export class Lighter {
     // get written to storage, so a ban survives this DO going idle and
     // restarting, but routine rate-limit bookkeeping doesn't cost a write.
     this.ipActivity = new Map(); // ip -> { lastActionAt, strikes }
-    // Viewer presence — in-memory only, never persisted. Resetting on DO
-    // eviction just means the count looks low for a few seconds until
-    // everyone's next poll re-touches it; acceptable for an estimate.
-    this.viewers = new Map(); // viewerId -> lastSeenAt
+    // Which viewers currently have their lighter lit — in-memory only. A DO
+    // eviction forgets it, but lit pages re-assert on their next poll.
+    this.litViewers = new Map(); // viewerId -> lastSeenAt
+    this.checkpointAt = Date.now();
+    this.lastPersistAt = 0;
     this.ready = this.state.blockConcurrencyWhile(async () => {
       const stored = await this.state.storage.get([
         "fuelSeconds",
-        "lit",
-        "litAt",
         "lastRefill",
         "refillCount",
         "blockedIps",
       ]);
       this.fuelSeconds = stored.get("fuelSeconds") ?? FULL_TANK_BURN_SECONDS;
-      this.lit = stored.get("lit") ?? false;
-      this.litAt = stored.get("litAt") ?? null;
       this.lastRefill = stored.get("lastRefill") ?? null;
       this.refillCount = stored.get("refillCount") ?? 0;
 
@@ -68,32 +67,37 @@ export class Lighter {
     });
   }
 
-  // Marks this viewer as present and returns the current (pruned) count.
-  // Self-inclusive — the caller's own request always counts toward it.
-  touchPresence(viewerId, now) {
-    this.viewers.set(viewerId, now);
-    for (const [id, lastSeen] of this.viewers) {
-      if (now - lastSeen > PRESENCE_TTL_MS) this.viewers.delete(id);
+  // Applies burn since the last checkpoint at the current lit count, then
+  // moves the checkpoint to now. Must run before the lit set changes so the
+  // elapsed interval is charged at the old rate.
+  settle(now) {
+    const burning = Math.min(this.litViewers.size, MAX_BURN_MULTIPLIER);
+    if (burning > 0) {
+      this.fuelSeconds = Math.max(0, this.fuelSeconds - ((now - this.checkpointAt) / 1000) * burning);
     }
-    return this.viewers.size;
+    this.checkpointAt = now;
+    if (this.fuelSeconds <= 0) {
+      this.fuelSeconds = 0;
+      this.litViewers.clear(); // out of fuel — everyone's flame goes out
+    }
   }
 
-  // Fuel is never decremented on a timer — it's computed on demand from how
-  // long the flame has actually been lit, multiplied by however many
-  // viewers are currently here (a flat estimate applied to the whole
-  // elapsed interval, not a precise history of when the count changed).
-  currentFuelSeconds(now, viewerCount) {
-    if (!this.lit) return this.fuelSeconds;
-    const multiplier = Math.max(1, Math.min(viewerCount, MAX_BURN_MULTIPLIER));
-    const elapsed = ((now - this.litAt) / 1000) * multiplier;
-    return Math.max(0, this.fuelSeconds - elapsed);
+  // Drops lit viewers we haven't heard from. Returns true if any dropped.
+  pruneLit(now) {
+    let dropped = false;
+    for (const [id, lastSeen] of this.litViewers) {
+      if (now - lastSeen > LIT_TTL_MS) {
+        this.litViewers.delete(id);
+        dropped = true;
+      }
+    }
+    return dropped;
   }
 
   async persist() {
+    this.lastPersistAt = this.checkpointAt;
     await this.state.storage.put({
       fuelSeconds: this.fuelSeconds,
-      lit: this.lit,
-      litAt: this.litAt,
       lastRefill: this.lastRefill,
       refillCount: this.refillCount,
     });
@@ -139,16 +143,17 @@ export class Lighter {
     return null;
   }
 
-  publicState(now, viewerCount) {
-    const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
+  // Assumes settle() already ran this request, so fuelSeconds is current.
+  publicState(now, viewerId) {
+    const fuelSeconds = this.fuelSeconds;
     return {
-      lit: this.lit && fuelSeconds > 0,
+      lit: this.litViewers.has(viewerId),
+      litCount: this.litViewers.size,
       fuelSeconds: Math.round(fuelSeconds),
       fuelPercent: Math.round((fuelSeconds / FULL_TANK_BURN_SECONDS) * 10000) / 100,
       fullTankBurnSeconds: FULL_TANK_BURN_SECONDS,
       lastRefill: this.lastRefill,
       refillCount: this.refillCount,
-      viewerCount,
       serverTime: now,
     };
   }
@@ -164,55 +169,47 @@ export class Lighter {
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     const now = Date.now();
     // Client sends a random per-page-load id as ?v=; falls back to IP for
-    // stray requests without one (e.g. the debug panel) so this never
-    // throws, just slightly undercounts in that edge case.
+    // stray requests without one.
     const viewerId = url.searchParams.get("v") || ip;
-    const viewerCount = this.touchPresence(viewerId, now);
+
+    // Any request from a lit viewer doubles as its heartbeat. Then charge
+    // burn at the current rate, and only after that drop stale lit viewers.
+    if (this.litViewers.has(viewerId)) this.litViewers.set(viewerId, now);
+    this.settle(now);
+    let litChanged = this.pruneLit(now);
 
     if (request.method === "GET" && url.pathname === "/state") {
-      // Opportunistically checkpoint if the tank ran dry since the last write.
-      if (this.lit && this.currentFuelSeconds(now, viewerCount) <= 0) {
-        this.fuelSeconds = 0;
-        this.lit = false;
-        this.litAt = null;
-        await this.persist();
+      // A page that thinks it's lit (?lit=1) re-asserts that, e.g. after the
+      // DO restarted and forgot — only if there's fuel left.
+      if (url.searchParams.get("lit") === "1" && this.fuelSeconds > 0 && !this.litViewers.has(viewerId)) {
+        this.litViewers.set(viewerId, now);
+        litChanged = true;
       }
-      return json(this.publicState(now, viewerCount), 200, this.env);
+      if (litChanged || now - this.lastPersistAt >= PERSIST_EVERY_MS) await this.persist();
+      return json(this.publicState(now, viewerId), 200, this.env);
     }
 
     if (request.method === "POST" && url.pathname === "/light") {
       const blocked = await this.guard(request, ip, now);
       if (blocked) return blocked;
 
-      const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
-      if (fuelSeconds <= 0) {
-        this.fuelSeconds = 0;
-        this.lit = false;
-        this.litAt = null;
+      if (this.fuelSeconds <= 0) {
         await this.persist();
-        return json({ error: "empty", ...this.publicState(now, viewerCount) }, 409, this.env);
+        return json({ error: "empty", ...this.publicState(now, viewerId) }, 409, this.env);
       }
 
-      if (!this.lit) {
-        this.fuelSeconds = fuelSeconds;
-        this.lit = true;
-        this.litAt = now;
-        await this.persist();
-      }
-      return json(this.publicState(now, viewerCount), 200, this.env);
+      this.litViewers.set(viewerId, now);
+      await this.persist();
+      return json(this.publicState(now, viewerId), 200, this.env);
     }
 
     if (request.method === "POST" && url.pathname === "/extinguish") {
       const blocked = await this.guard(request, ip, now);
       if (blocked) return blocked;
 
-      if (this.lit) {
-        this.fuelSeconds = this.currentFuelSeconds(now, viewerCount);
-        this.lit = false;
-        this.litAt = null;
-        await this.persist();
-      }
-      return json(this.publicState(now, viewerCount), 200, this.env);
+      this.litViewers.delete(viewerId);
+      await this.persist();
+      return json(this.publicState(now, viewerId), 200, this.env);
     }
 
     if (request.method === "POST" && url.pathname === "/refill") {
@@ -221,14 +218,12 @@ export class Lighter {
 
       // Only when empty (under a second left counts as empty, matching the
       // whole-second fuelSeconds the clients see).
-      const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
-      if (fuelSeconds >= 1) {
-        return json({ error: "not_empty", ...this.publicState(now, viewerCount) }, 409, this.env);
+      if (this.fuelSeconds >= 1) {
+        return json({ error: "not_empty", ...this.publicState(now, viewerId) }, 409, this.env);
       }
 
       this.fuelSeconds = FULL_TANK_BURN_SECONDS;
-      this.lit = false;
-      this.litAt = null;
+      this.litViewers.clear();
       this.lastRefill = {
         timestamp: now,
         // Coarse, Cloudflare-derived location — not the visitor's raw IP.
@@ -238,7 +233,7 @@ export class Lighter {
       };
       this.refillCount += 1;
       await this.persist();
-      return json(this.publicState(now, viewerCount), 200, this.env);
+      return json(this.publicState(now, viewerId), 200, this.env);
     }
 
     return json({ error: "not_found" }, 404, this.env);
