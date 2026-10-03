@@ -250,7 +250,7 @@
     </div>
     <button id="btnRefillLive" disabled>refill</button>
     <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
-    <p class="status-note">lighters burning now: <span id="burningCount">0</span></p>
+    <p class="status-note">lighters burning now: <span id="burningCount">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
 
@@ -364,16 +364,94 @@
       }
     }
 
+    // The display is driven entirely by a local clock-based simulation,
+    // seeded from one real fetch on page load (and reseeded whenever an
+    // action succeeds against the real backend) — not by polling /state
+    // on a timer. Mirrors the Worker's exact fuel math, so it stays
+    // accurate between syncs with zero ongoing network cost.
+    const LOCAL_FULL_TANK_BURN_SECONDS = 900; // must match workers/spark-lighter/src/lighter.js
+    const localState = {
+      fuelSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
+      lit: false,
+      litAt: null,
+      lastRefill: null,
+      fullTankBurnSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
+    };
+
+    function localCurrentFuelSeconds(now) {
+      if (!localState.lit) return localState.fuelSeconds;
+      return Math.max(0, localState.fuelSeconds - (now - localState.litAt) / 1000);
+    }
+    function localPublicState(now) {
+      const fuelSeconds = localCurrentFuelSeconds(now);
+      return {
+        lit: localState.lit && fuelSeconds > 0,
+        fuelSeconds: Math.round(fuelSeconds),
+        fuelPercent: Math.round((fuelSeconds / localState.fullTankBurnSeconds) * 10000) / 100,
+        fullTankBurnSeconds: localState.fullTankBurnSeconds,
+        lastRefill: localState.lastRefill,
+        serverTime: now,
+      };
+    }
+    // Local mutations, used only when a real action call fails (offline).
+    function localHandle(path, method) {
+      const now = Date.now();
+      if (path === "/state") return localPublicState(now);
+      if (path === "/light" && method === "POST") {
+        const fuelSeconds = localCurrentFuelSeconds(now);
+        if (fuelSeconds <= 0) {
+          localState.fuelSeconds = 0; localState.lit = false; localState.litAt = null;
+          return { error: "empty", ...localPublicState(now) };
+        }
+        if (!localState.lit) { localState.fuelSeconds = fuelSeconds; localState.lit = true; localState.litAt = now; }
+        return localPublicState(now);
+      }
+      if (path === "/extinguish" && method === "POST") {
+        if (localState.lit) { localState.fuelSeconds = localCurrentFuelSeconds(now); localState.lit = false; localState.litAt = null; }
+        return localPublicState(now);
+      }
+      if (path === "/refill" && method === "POST") {
+        const fuelSeconds = localCurrentFuelSeconds(now);
+        if (fuelSeconds > 0) return { error: "not_empty", ...localPublicState(now) };
+        localState.fuelSeconds = localState.fullTankBurnSeconds;
+        localState.lit = false;
+        localState.litAt = null;
+        localState.lastRefill = { timestamp: now, city: "local", region: null, country: null };
+        return localPublicState(now);
+      }
+      return { error: "not_found" };
+    }
+    // Re-anchor the local clock to a real, authoritative response — the
+    // server's fuelSeconds is "as of" its own serverTime, so we treat our
+    // own Date.now() right now as that same instant going forward.
+    function seedFromServer(data) {
+      localState.fullTankBurnSeconds = data.fullTankBurnSeconds || LOCAL_FULL_TANK_BURN_SECONDS;
+      localState.fuelSeconds = data.fuelSeconds;
+      localState.lit = data.lit;
+      localState.litAt = data.lit ? Date.now() : null;
+      localState.lastRefill = data.lastRefill;
+    }
+
     async function call(path, method = "GET") {
       try {
         const res = await fetch(base() + path, { method });
         const data = await res.json();
+        $("offlineNote").hidden = true;
+        seedFromServer(data);
         render({ status: res.status, ...data });
         return data;
       } catch (err) {
-        $("out").textContent = "Error: " + err.message + "\n\n(Check the Worker URL, and that this page's origin is allowed by ALLOWED_ORIGIN.)";
+        $("offlineNote").hidden = false;
+        const data = localHandle(path, method);
+        render(data);
+        return data;
       }
     }
+
+    // Ticks the display from the local simulation only — no network call.
+    // 100ms so the two-decimal percentage visibly moves by ~0.01 each
+    // step (900s tank ≈ 9s per whole percent, so 0.01% every ~90ms).
+    setInterval(() => render(localPublicState(Date.now())), 100);
 
     $("btnState").onclick = () => call("/state");
     $("btnLight").onclick = () => call("/light", "POST");
@@ -381,8 +459,7 @@
     $("btnRefill").onclick = () => call("/refill", "POST");
     $("btnRefillLive").onclick = () => call("/refill", "POST");
 
-    // Poll every second so the debug readout (and flame flicker) stay live.
-    setInterval(() => call("/state"), 1000);
+    // One real fetch on load to seed local state — no ongoing polling.
     call("/state");
 
     function playLidSwing(name) {
