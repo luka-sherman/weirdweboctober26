@@ -421,7 +421,6 @@
     // flame is never shown just because shared state says lit:true.
     let struck = false;
 
-    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     function formatRefillTime(ms) {
       const d = new Date(ms);
       const pad = (n) => String(n).padStart(2, "0");
@@ -430,7 +429,7 @@
       const tz = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" })
         .formatToParts(d)
         .find((p) => p.type === "timeZoneName").value;
-      return `${MONTHS[d.getMonth()]} ${pad(d.getDate())} ${d.getFullYear()}, `
+      return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${pad(d.getFullYear() % 100)}, `
         + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tz}`;
     }
 
