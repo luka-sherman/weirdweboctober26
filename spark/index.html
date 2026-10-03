@@ -131,18 +131,46 @@
 
   #lighterRow {
     display: flex;
-    align-items: flex-start; /* fuelColumn is now taller than #lighter
-      (bar matches it, but button + status hang below), so it shouldn't
-      be stretched to the row's height */
-    gap: 3rem;
+    align-items: flex-start; /* don't stretch #fuelColumn — JS syncs
+      #fuelBarWrap's height to #lighter's exactly, so stretching would
+      just be redundant, not wrong, but flex-start is the stable default
+      while that sync hasn't run yet on first paint */
+    gap: 4.5rem;
   }
   #fuelColumn {
     display: flex;
     flex-direction: column;
+    /* #fuelLabel (the percentage) is positioned absolutely over the bar,
+       via #fuelIndicator, so it can ride the fill level — that takes it
+       out of flow, so it doesn't contribute to this column's own width.
+       Without reserving that space here, body's centering only accounts
+       for the bar itself, and the whole lighter+bar+label cluster ends
+       up shifted right of true center (extra space to the lighter's
+       left) by about half the label's width. 3.6rem is the bar's own
+       1rem plus the label's margin + widest value ("100.00%"). */
+    width: 3.6rem;
+    /* flex-start (not center) keeps #fuelBarWrap flush at the column's
+       own left edge — center would instead split the reserved space on
+       both sides of the bar, pulling it away from #lighter, rather than
+       reserving it for the label on the bar's right. */
+    align-items: flex-start;
+    /* Matches #lighter's own margin:2rem 0 — getBoundingClientRect()
+       (used by syncFuelBarHeight to match heights) excludes margin, so
+       without this the two boxes are the same height but start 2rem
+       apart under align-items:flex-start, leaving the bar 2rem short of
+       #lighter's actual bottom edge. */
+    margin-top: 2rem;
+  }
+  /* Always below the lighter+fuel-bar row and centered (body's own
+     align-items:center handles the centering — this just lays out its
+     own children). On mobile this also gets pinned to the screen's
+     bottom via position:fixed (see media query). */
+  #refillAndStatus {
+    display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 0.6rem;
-    /* no fixed width — sized by its widest child (now the status-note
-       text), while #fuelBarWrap below keeps the bar itself narrow */
+    margin-top: 2rem; /* matches #lighter's own margin:2rem 0 below */
   }
   /* Wrapper is the thing with overflow:visible — #fuelBar itself needs
      overflow:hidden (to clip the fill's rounded corners), which would
@@ -240,6 +268,9 @@
     z-index: 5;
   }
   #refillWrap.locked:hover #refillHint { display: block; }
+  /* Tap equivalent of the hover above, for mobile — see the
+     #refillWrap click listener in the script, which sets/clears this. */
+  #refillWrap.show-hint #refillHint { display: block; }
 
   /* Below this width, #lighterRow's default side-by-side layout (lighter
      at up to 90vw, plus a 3rem gap, plus the fuel column) doesn't fit —
@@ -256,9 +287,10 @@
        flow via position:fixed — this keeps the lighter+fuel-bar row from
        drifting underneath it. */
     body { padding: 1rem; padding-bottom: 7rem; }
-    #lighterRow { gap: 1rem; }
+    #lighterRow { gap: 2rem; }
     /* Narrower so the fuel bar + its label still fit beside it. */
     #lighter { margin: 0; width: min(230px, 58vw); }
+    #fuelColumn { margin-top: 0; } /* matches #lighter's margin reset above */
     /* JS still pins #fuelBarWrap's height to #lighter's own rendered
        height (syncFuelBarHeight) — same side-by-side behavior as desktop,
        just at this narrower width. */
@@ -266,26 +298,20 @@
     #fuelLabel { margin-left: 1.1rem; font-size: 0.65rem; } /* original
       1.6rem margin + 0.7rem font ran the percentage past the screen edge
       at this width — 1.1rem is the most room there is to spare */
-    /* #fuelLabel is positioned absolutely (via #fuelIndicator, so it can
-       ride the fill level) and so doesn't contribute to #fuelColumn's own
-       width — without this, body's centering only accounts for the 1rem
-       bar and the row looks shifted left by about the label's width.
-       align-items:flex-start keeps #fuelBarWrap flush at the column's own
-       left edge (its base align-items:center would instead center the bar
-       within this wider box, splitting the reserved space on both sides
-       instead of reserving it for the label on the right). */
-    #fuelColumn { width: 3.9rem; align-items: flex-start; }
-    /* Refill button + status notes pinned to the bottom of the screen,
-       out of #fuelColumn's normal flow entirely, so they don't compete
-       with the lighter/fuel-bar row for vertical space. */
+    /* Narrower than the base rule's 4.6rem since the label itself is
+       narrower here (smaller font, tighter margin — see #fuelLabel
+       above). align-items:flex-start is already set by the base rule. */
+    #fuelColumn { width: 3.9rem; }
+    /* Refill button + status notes pinned to the bottom of the screen
+       (base rule above already centers/stacks them), out of the normal
+       flow entirely so they don't compete with the lighter/fuel-bar row
+       for vertical space. */
     #refillAndStatus {
       position: fixed;
       left: 0;
       right: 0;
       bottom: 1rem;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      margin-top: 0;
       gap: 0.3rem;
     }
   }
@@ -329,16 +355,20 @@
         <span id="fuelLabel">--%</span>
       </div>
     </div>
-    <div id="refillAndStatus">
-      <div id="refillWrap">
-        <button id="btnRefillLive">refill lighter fluid</button>
-        <span id="refillHint">wait until empty</span>
-      </div>
-      <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
-      <p class="status-note">times refilled: <span id="refillCountText">0</span></p>
-      <p class="status-note">lighters burning now: <span id="viewerCountText">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
-    </div>
   </div>
+  </div>
+
+  <!-- Always below the lighter+fuel-bar row, centered — not inside
+       #fuelColumn (which would tie it to the fuel bar's side). On mobile
+       it's additionally pinned to the screen's bottom (see media query). -->
+  <div id="refillAndStatus">
+    <div id="refillWrap">
+      <button id="btnRefillLive">refill lighter fluid</button>
+      <span id="refillHint">wait until empty</span>
+    </div>
+    <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
+    <p class="status-note">times refilled: <span id="refillCountText">0</span></p>
+    <p class="status-note">lighters burning now: <span id="viewerCountText">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
 
   <div id="debugPanel" hidden>
@@ -622,6 +652,19 @@
         }
       }, 100);
     };
+
+    // A disabled <button> never dispatches click events (at all, to
+    // itself or any ancestor) — so on mobile, where :hover (used below
+    // for desktop) never triggers, tapping the button while it's locked
+    // did nothing. This listens on the wrapper instead, which stays a
+    // live tap target even while the button inside it is disabled.
+    let hintTimer = null;
+    $("refillWrap").addEventListener("click", () => {
+      if (!$("btnRefillLive").disabled) return; // real refill click — let it proceed normally
+      $("refillWrap").classList.add("show-hint");
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => $("refillWrap").classList.remove("show-hint"), 2000);
+    });
 
     // Real fetch on load, then every 15s to catch up with other visitors'
     // actions — the 100ms ticker in between still comes from local math,
