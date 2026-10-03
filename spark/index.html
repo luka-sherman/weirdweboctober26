@@ -345,7 +345,10 @@
     function render(data) {
       $("out").textContent = JSON.stringify(data, null, 2);
       if (data && typeof data.lit === "boolean") {
-        if (data.lit) startFlameFlicker();
+        // Lit alone isn't enough — open/close is local-only, so a page
+        // that loads and syncs lit:true from someone else's earlier
+        // action shouldn't show a flame over a still-closed lid.
+        if (data.lit && isOpen) startFlameFlicker();
         else stopFlameFlicker();
       }
       if (data && typeof data.fuelPercent === "number") {
