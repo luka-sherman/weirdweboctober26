@@ -246,8 +246,9 @@
         <span id="fuelLabel">--%</span>
       </div>
     </div>
-    <button id="btnRefillLive" disabled>refill</button>
-    <p class="status-note">last refilled: <span id="lastRefillText">never</span><span id="offlineNote" hidden> (currently offline)</span></p>
+    <button id="btnRefillLive" disabled title="can't refill until empty">refill lighter fluid</button>
+    <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
+    <p class="status-note">lighters burning now: <span id="viewerCountText">1</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
 
@@ -267,6 +268,11 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const base = () => $("base").value.replace(/\/$/, "");
+
+    // One random id per page load, sent as ?v= on every request so the
+    // Worker can tell how many distinct tabs/visitors are currently
+    // around — reuses requests already being made, no extra traffic.
+    const viewerId = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36));
 
     // --- flame flicker: random frame every ~90-170ms while lit ---
     const FLAME_FRAMES = ["assets/flame1.png", "assets/flame2.png", "assets/flame3.png"];
@@ -349,12 +355,22 @@
         $("fuelLabel").textContent = data.fuelPercent.toFixed(2) + "%";
         // The Worker only accepts /refill once fuelSeconds is actually 0 —
         // match that exactly rather than a rounded/near-zero percent.
-        $("btnRefillLive").disabled = data.fuelSeconds > 0;
+        const empty = data.fuelSeconds <= 0;
+        $("btnRefillLive").disabled = !empty;
+        // Native title attribute = a real hover tooltip, no custom popup
+        // needed. Only set while disabled, so it doesn't show once usable.
+        $("btnRefillLive").title = empty ? "" : "can't refill until empty";
       }
       if (data && "lastRefill" in data) {
         $("lastRefillText").textContent = data.lastRefill
           ? formatRefillTime(data.lastRefill.timestamp)
           : "never";
+      }
+      if (data && typeof data.viewerCount === "number") {
+        // The server's viewerCount is just "tabs currently open" — only
+        // meaningful as "burning now" while actually lit, so it reads 0
+        // otherwise. Gated here client-side, no server change needed.
+        $("viewerCountText").textContent = data.lit ? data.viewerCount : 0;
       }
     }
 
@@ -364,17 +380,20 @@
     // on a timer. Mirrors the Worker's exact fuel math, so it stays
     // accurate between syncs with zero ongoing network cost.
     const LOCAL_FULL_TANK_BURN_SECONDS = 900; // must match workers/spark-lighter/src/lighter.js
+    const LOCAL_MAX_BURN_MULTIPLIER = 8; // must match MAX_BURN_MULTIPLIER server-side
     const localState = {
       fuelSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
       lit: false,
       litAt: null,
       lastRefill: null,
       fullTankBurnSeconds: LOCAL_FULL_TANK_BURN_SECONDS,
+      viewerCount: 1, // last known real count; reused for offline local math too
     };
 
     function localCurrentFuelSeconds(now) {
       if (!localState.lit) return localState.fuelSeconds;
-      return Math.max(0, localState.fuelSeconds - (now - localState.litAt) / 1000);
+      const multiplier = Math.max(1, Math.min(localState.viewerCount, LOCAL_MAX_BURN_MULTIPLIER));
+      return Math.max(0, localState.fuelSeconds - ((now - localState.litAt) / 1000) * multiplier);
     }
     function localPublicState(now) {
       const fuelSeconds = localCurrentFuelSeconds(now);
@@ -384,6 +403,7 @@
         fuelPercent: Math.round((fuelSeconds / localState.fullTankBurnSeconds) * 10000) / 100,
         fullTankBurnSeconds: localState.fullTankBurnSeconds,
         lastRefill: localState.lastRefill,
+        viewerCount: localState.viewerCount,
         serverTime: now,
       };
     }
@@ -424,11 +444,13 @@
       localState.lit = data.lit;
       localState.litAt = data.lit ? Date.now() : null;
       localState.lastRefill = data.lastRefill;
+      if (typeof data.viewerCount === "number") localState.viewerCount = data.viewerCount;
     }
 
     async function call(path, method = "GET") {
       try {
-        const res = await fetch(base() + path, { method });
+        const sep = path.includes("?") ? "&" : "?";
+        const res = await fetch(base() + path + sep + "v=" + viewerId, { method });
         const data = await res.json();
         $("offlineNote").hidden = true;
         seedFromServer(data);
@@ -453,8 +475,11 @@
     $("btnRefill").onclick = () => call("/refill", "POST");
     $("btnRefillLive").onclick = () => call("/refill", "POST");
 
-    // One real fetch on load to seed local state — no ongoing polling.
+    // Real fetch on load, then every 15s to catch up with other visitors'
+    // actions — the 100ms ticker in between still comes from local math,
+    // not the network, so this is 4 requests/min per open tab, not 600.
     call("/state");
+    setInterval(() => call("/state"), 15000);
 
     function playLidSwing(name) {
       const lid = $("lidImg");

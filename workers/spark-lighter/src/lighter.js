@@ -8,6 +8,16 @@ const STRIKES_BEFORE_BLOCK = 5;
 // How long a block lasts once triggered.
 const BLOCK_DURATION_MS = 5 * 60 * 1000;
 
+// Presence/burn-rate: lazy and approximate by design, not exact. A viewer
+// counts as "here" if seen within this window — comfortably more than the
+// frontend's 15s poll interval so one missed beat doesn't drop them.
+const PRESENCE_TTL_MS = 40 * 1000;
+// Burn rate is just "how many viewers are here right now", applied flatly
+// to however much time has elapsed since the last checkpoint — no attempt
+// to track exactly when the count changed during that interval. Capped so
+// a traffic spike can't instantly empty the tank.
+const MAX_BURN_MULTIPLIER = 8;
+
 function corsHeaders(env) {
   return {
     "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
@@ -31,6 +41,10 @@ export class Lighter {
     // get written to storage, so a ban survives this DO going idle and
     // restarting, but routine rate-limit bookkeeping doesn't cost a write.
     this.ipActivity = new Map(); // ip -> { lastActionAt, strikes }
+    // Viewer presence — in-memory only, never persisted. Resetting on DO
+    // eviction just means the count looks low for a few seconds until
+    // everyone's next poll re-touches it; acceptable for an estimate.
+    this.viewers = new Map(); // viewerId -> lastSeenAt
     this.ready = this.state.blockConcurrencyWhile(async () => {
       const stored = await this.state.storage.get([
         "fuelSeconds",
@@ -52,12 +66,24 @@ export class Lighter {
     });
   }
 
+  // Marks this viewer as present and returns the current (pruned) count.
+  // Self-inclusive — the caller's own request always counts toward it.
+  touchPresence(viewerId, now) {
+    this.viewers.set(viewerId, now);
+    for (const [id, lastSeen] of this.viewers) {
+      if (now - lastSeen > PRESENCE_TTL_MS) this.viewers.delete(id);
+    }
+    return this.viewers.size;
+  }
+
   // Fuel is never decremented on a timer — it's computed on demand from how
-  // long the flame has actually been lit, so every visitor sees the same
-  // answer regardless of who else is loading the page right now.
-  currentFuelSeconds(now) {
+  // long the flame has actually been lit, multiplied by however many
+  // viewers are currently here (a flat estimate applied to the whole
+  // elapsed interval, not a precise history of when the count changed).
+  currentFuelSeconds(now, viewerCount) {
     if (!this.lit) return this.fuelSeconds;
-    const elapsed = (now - this.litAt) / 1000;
+    const multiplier = Math.max(1, Math.min(viewerCount, MAX_BURN_MULTIPLIER));
+    const elapsed = ((now - this.litAt) / 1000) * multiplier;
     return Math.max(0, this.fuelSeconds - elapsed);
   }
 
@@ -110,14 +136,15 @@ export class Lighter {
     return null;
   }
 
-  publicState(now) {
-    const fuelSeconds = this.currentFuelSeconds(now);
+  publicState(now, viewerCount) {
+    const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
     return {
       lit: this.lit && fuelSeconds > 0,
       fuelSeconds: Math.round(fuelSeconds),
       fuelPercent: Math.round((fuelSeconds / FULL_TANK_BURN_SECONDS) * 10000) / 100,
       fullTankBurnSeconds: FULL_TANK_BURN_SECONDS,
       lastRefill: this.lastRefill,
+      viewerCount,
       serverTime: now,
     };
   }
@@ -132,29 +159,34 @@ export class Lighter {
     const url = new URL(request.url);
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     const now = Date.now();
+    // Client sends a random per-page-load id as ?v=; falls back to IP for
+    // stray requests without one (e.g. the debug panel) so this never
+    // throws, just slightly undercounts in that edge case.
+    const viewerId = url.searchParams.get("v") || ip;
+    const viewerCount = this.touchPresence(viewerId, now);
 
     if (request.method === "GET" && url.pathname === "/state") {
       // Opportunistically checkpoint if the tank ran dry since the last write.
-      if (this.lit && this.currentFuelSeconds(now) <= 0) {
+      if (this.lit && this.currentFuelSeconds(now, viewerCount) <= 0) {
         this.fuelSeconds = 0;
         this.lit = false;
         this.litAt = null;
         await this.persist();
       }
-      return json(this.publicState(now), 200, this.env);
+      return json(this.publicState(now, viewerCount), 200, this.env);
     }
 
     if (request.method === "POST" && url.pathname === "/light") {
       const blocked = await this.guard(request, ip, now);
       if (blocked) return blocked;
 
-      const fuelSeconds = this.currentFuelSeconds(now);
+      const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
       if (fuelSeconds <= 0) {
         this.fuelSeconds = 0;
         this.lit = false;
         this.litAt = null;
         await this.persist();
-        return json({ error: "empty", ...this.publicState(now) }, 409, this.env);
+        return json({ error: "empty", ...this.publicState(now, viewerCount) }, 409, this.env);
       }
 
       if (!this.lit) {
@@ -163,7 +195,7 @@ export class Lighter {
         this.litAt = now;
         await this.persist();
       }
-      return json(this.publicState(now), 200, this.env);
+      return json(this.publicState(now, viewerCount), 200, this.env);
     }
 
     if (request.method === "POST" && url.pathname === "/extinguish") {
@@ -171,21 +203,21 @@ export class Lighter {
       if (blocked) return blocked;
 
       if (this.lit) {
-        this.fuelSeconds = this.currentFuelSeconds(now);
+        this.fuelSeconds = this.currentFuelSeconds(now, viewerCount);
         this.lit = false;
         this.litAt = null;
         await this.persist();
       }
-      return json(this.publicState(now), 200, this.env);
+      return json(this.publicState(now, viewerCount), 200, this.env);
     }
 
     if (request.method === "POST" && url.pathname === "/refill") {
       const blocked = await this.guard(request, ip, now);
       if (blocked) return blocked;
 
-      const fuelSeconds = this.currentFuelSeconds(now);
+      const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
       if (fuelSeconds > 0) {
-        return json({ error: "not_empty", ...this.publicState(now) }, 409, this.env);
+        return json({ error: "not_empty", ...this.publicState(now, viewerCount) }, 409, this.env);
       }
 
       this.fuelSeconds = FULL_TANK_BURN_SECONDS;
@@ -199,7 +231,7 @@ export class Lighter {
         country: request.cf?.country ?? null,
       };
       await this.persist();
-      return json(this.publicState(now), 200, this.env);
+      return json(this.publicState(now, viewerCount), 200, this.env);
     }
 
     return json({ error: "not_found" }, 404, this.env);
