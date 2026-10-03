@@ -115,7 +115,7 @@ export class Lighter {
     return {
       lit: this.lit && fuelSeconds > 0,
       fuelSeconds: Math.round(fuelSeconds),
-      fuelPercent: Math.round((fuelSeconds / FULL_TANK_BURN_SECONDS) * 1000) / 10,
+      fuelPercent: Math.round((fuelSeconds / FULL_TANK_BURN_SECONDS) * 10000) / 100,
       fullTankBurnSeconds: FULL_TANK_BURN_SECONDS,
       lastRefill: this.lastRefill,
       serverTime: now,

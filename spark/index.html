@@ -104,12 +104,100 @@
 
   hr { border: none; border-top: 1px solid #333; margin: 2rem 0; }
   .debug-label { opacity: 0.5; font-size: 0.85rem; }
+
+  #lighterRow {
+    display: flex;
+    align-items: stretch; /* fuelColumn matches #lighter's rendered height */
+    gap: 3rem;
+  }
+  #fuelColumn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    width: 5rem; /* room for the label beside the bar */
+  }
+  /* Wrapper is the thing that's flex:1 and overflow:visible — #fuelBar
+     itself needs overflow:hidden (to clip the fill's rounded corners),
+     which would also clip the indicator label if it lived inside. */
+  #fuelBarWrap {
+    position: relative;
+    flex: 1;
+    width: 1rem;
+  }
+  #fuelBar {
+    position: absolute;
+    inset: 0;
+    background: #2a2a2a;
+    border-radius: 999px;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end; /* fill grows upward from the bottom */
+  }
+  #fuelFill {
+    width: 100%;
+    height: 0%;
+    background: linear-gradient(0deg, #7a2a0c, #ff8a3d);
+    transition: height 0.3s ease;
+  }
+  /* The moving line + label: positioned by `bottom` (set in JS, same %
+     as fuelFill's height) and centered on that point via translateY. */
+  #fuelIndicator {
+    position: absolute;
+    left: 0;
+    bottom: 0%;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem; /* label sits a bit further right of the bar */
+    transform: translateY(50%);
+    pointer-events: none;
+    transition: bottom 0.3s ease;
+  }
+  #fuelTick {
+    width: 1rem;
+    height: 2px;
+    background: #ff8a3d;
+    flex: none;
+  }
+  #fuelLabel {
+    font-family: monospace; /* same as "spark" above, which inherits it
+      from body — spans do too, but set explicitly for clarity */
+    font-size: 0.7rem;
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+  #btnRefillLive {
+    /* buttons don't inherit the page font by default in most browsers'
+       UA stylesheets — set explicitly to match "spark" above. */
+    font-family: monospace;
+    font-size: 0.9rem;
+    padding: 0.4rem 0.9rem;
+    background: #3a3a3a;
+    color: #777;
+    border: none;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: not-allowed;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  /* Only clickable/colored once fuel is actually empty — real :disabled,
+     not just a visual style, so it can't be clicked or tabbed to otherwise. */
+  #btnRefillLive:not(:disabled) {
+    background: #ff8a3d;
+    color: #111;
+    cursor: pointer;
+  }
+  #btnRefillLive:not(:disabled):hover {
+    background: #ffa868;
+  }
 </style>
 </head>
 <body>
   <script src="../shared/home-button.js"></script>
   <h1>spark</h1>
 
+  <div id="lighterRow">
   <div id="lighter">
     <img id="bodyImg" src="assets/body.png" alt="lighter body" draggable="false" />
     <img id="hingeImg" src="assets/hinge.png" alt="" draggable="false" />
@@ -134,6 +222,18 @@
         <clipPath id="wheelClip"><rect width="2476" height="2556" fill="white"/></clipPath>
       </defs>
     </svg>
+  </div>
+
+  <div id="fuelColumn">
+    <div id="fuelBarWrap">
+      <div id="fuelBar"><div id="fuelFill"></div></div>
+      <div id="fuelIndicator">
+        <span id="fuelTick"></span>
+        <span id="fuelLabel">--%</span>
+      </div>
+    </div>
+    <button id="btnRefillLive" disabled>refill</button>
+  </div>
   </div>
 
   <hr />
@@ -181,6 +281,15 @@
         if (data.lit) startFlameFlicker();
         else stopFlameFlicker();
       }
+      if (data && typeof data.fuelPercent === "number") {
+        const pct = Math.max(0, Math.min(100, data.fuelPercent)) + "%";
+        $("fuelFill").style.height = pct;
+        $("fuelIndicator").style.bottom = pct; // line + label ride the fill level
+        $("fuelLabel").textContent = data.fuelPercent.toFixed(2) + "%";
+        // The Worker only accepts /refill once fuelSeconds is actually 0 —
+        // match that exactly rather than a rounded/near-zero percent.
+        $("btnRefillLive").disabled = data.fuelSeconds > 0;
+      }
     }
 
     async function call(path, method = "GET") {
@@ -198,6 +307,7 @@
     $("btnLight").onclick = () => call("/light", "POST");
     $("btnExtinguish").onclick = () => call("/extinguish", "POST");
     $("btnRefill").onclick = () => call("/refill", "POST");
+    $("btnRefillLive").onclick = () => call("/refill", "POST");
 
     // Poll every second so the debug readout (and flame flicker) stay live.
     setInterval(() => call("/state"), 1000);
