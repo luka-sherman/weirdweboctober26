@@ -237,18 +237,19 @@
   </div>
   </div>
 
-  <hr />
-  <p class="debug-label">Debug harness — backend testing until the final UI polish lands.</p>
-  <label>Worker URL: <input id="base" value="https://spark-lighter.luka-msherman.workers.dev" /></label>
-  <div>
-    <button id="btnState">refresh state</button>
-    <button id="btnLight">light</button>
-    <button id="btnExtinguish">extinguish</button>
-    <button id="btnRefill">refill</button>
+  <div id="debugPanel" hidden>
+    <hr />
+    <p class="debug-label">Debug harness — backend testing until the final UI polish lands.</p>
+    <label>Worker URL: <input id="base" value="https://spark-lighter.luka-msherman.workers.dev" /></label>
+    <div>
+      <button id="btnState">refresh state</button>
+      <button id="btnLight">light</button>
+      <button id="btnExtinguish">extinguish</button>
+      <button id="btnRefill">refill</button>
+    </div>
+    <pre id="out">(no data yet)</pre>
   </div>
-  <pre id="out">(no data yet)</pre>
 
-  <hr />
   <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
   <p class="status-note">lighters burning now: <span id="burningCount">0</span></p>
 
