@@ -18,6 +18,9 @@
     padding: 2rem;
     min-height: 100vh; /* so there's room to center within, not just
       the content's own height */
+    min-height: 100dvh; /* mobile browsers: excludes the address bar's
+      own show/hide, so this doesn't change as it scrolls — ignored by
+      browsers that don't support dvh, which keep the 100vh above */
     display: flex;
     flex-direction: column;
     align-items: center; /* centers each child as a block; #lighterRow
@@ -237,6 +240,54 @@
     z-index: 5;
   }
   #refillWrap.locked:hover #refillHint { display: block; }
+
+  /* Below this width, #lighterRow's default side-by-side layout (lighter
+     at up to 90vw, plus a 3rem gap, plus the fuel column) doesn't fit —
+     the lighter is shrunk to leave the fuel bar room beside it instead of
+     stacking. Also locks the page to one screen's height (no scroll) so
+     the wheel's swipe-down gesture never has to fight page scroll/bounce. */
+  @media (max-width: 640px) {
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none; /* no bounce/pull-to-refresh fighting the swipe */
+    }
+    /* Bottom space reserved for #refillAndStatus below, pulled out of
+       flow via position:fixed — this keeps the lighter+fuel-bar row from
+       drifting underneath it. */
+    body { padding: 1rem; padding-bottom: 7rem; }
+    #lighterRow { gap: 1rem; }
+    /* Narrower so the fuel bar + its label still fit beside it. */
+    #lighter { margin: 0; width: min(230px, 58vw); }
+    /* JS still pins #fuelBarWrap's height to #lighter's own rendered
+       height (syncFuelBarHeight) — same side-by-side behavior as desktop,
+       just at this narrower width. */
+    #fuelLabel { margin-left: 1.1rem; font-size: 0.65rem; } /* original
+      1.6rem margin + 0.7rem font ran the percentage past the screen edge
+      at this width — 1.1rem is the most room there is to spare */
+    /* #fuelLabel is positioned absolutely (via #fuelIndicator, so it can
+       ride the fill level) and so doesn't contribute to #fuelColumn's own
+       width — without this, body's centering only accounts for the 1rem
+       bar and the row looks shifted left by about the label's width.
+       align-items:flex-start keeps #fuelBarWrap flush at the column's own
+       left edge (its base align-items:center would instead center the bar
+       within this wider box, splitting the reserved space on both sides
+       instead of reserving it for the label on the right). */
+    #fuelColumn { width: 3.9rem; align-items: flex-start; }
+    /* Refill button + status notes pinned to the bottom of the screen,
+       out of #fuelColumn's normal flow entirely, so they don't compete
+       with the lighter/fuel-bar row for vertical space. */
+    #refillAndStatus {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.3rem;
+    }
+  }
 </style>
 </head>
 <body>
@@ -277,13 +328,15 @@
         <span id="fuelLabel">--%</span>
       </div>
     </div>
-    <div id="refillWrap">
-      <button id="btnRefillLive">refill lighter fluid</button>
-      <span id="refillHint">wait until empty</span>
+    <div id="refillAndStatus">
+      <div id="refillWrap">
+        <button id="btnRefillLive">refill lighter fluid</button>
+        <span id="refillHint">wait until empty</span>
+      </div>
+      <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
+      <p class="status-note">times refilled: <span id="refillCountText">0</span></p>
+      <p class="status-note">lighters burning now: <span id="viewerCountText">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
     </div>
-    <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
-    <p class="status-note">times refilled: <span id="refillCountText">0</span></p>
-    <p class="status-note">lighters burning now: <span id="viewerCountText">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
 
@@ -415,7 +468,6 @@
       if (data && typeof data.litCount === "number") {
         $("viewerCountText").textContent = data.litCount;
       }
-    }
     }
 
     // The display is driven entirely by a local clock-based simulation,
