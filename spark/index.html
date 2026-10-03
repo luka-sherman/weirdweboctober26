@@ -6,35 +6,181 @@
 <style>
   body { font-family: monospace; background: #111; color: #eee; padding: 2rem; }
   button { font-size: 1rem; padding: 0.6rem 1.2rem; margin-right: 0.5rem; margin-bottom: 1rem; cursor: pointer; }
-  #flame { font-size: 3rem; }
   pre { background: #000; color: #0f0; padding: 1rem; border-radius: 6px; max-width: 500px; white-space: pre-wrap; }
   input { font-family: monospace; padding: 0.3rem; width: 320px; }
+
+  #lighter {
+    position: relative;
+    width: min(480px, 90vw);
+    aspect-ratio: 2476 / 2556; /* shared canvas for every layer below */
+    margin: 2rem 0;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none; /* iOS: no long-press callout/menu */
+  }
+  #lighter img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    -webkit-user-drag: none; /* stop the native "pick up and drag this
+      image" ghost — it would otherwise fight the wheel's swipe gesture */
+    user-drag: none;
+  }
+  /* body: always visible, bottom of the stack */
+  #bodyImg { z-index: 1; }
+  /* hinge: hidden while closed, revealed partway through opening/closing
+     (see hinge-reveal-* keyframes) — it's covered by the lid until the
+     lid's lifted enough to expose it. */
+  #hingeImg { z-index: 2; opacity: 0; }
+  /* flame: only shown while lit, flickering between 3 frames */
+  #flameImg { z-index: 3; display: none; }
+  /* lid: always on top, swings between closed/open via transform only
+     (never fades — see lid-swing-* keyframes below) */
+  #lidImg {
+    z-index: 10;
+    transform-origin: 52.2213% 57.9812%; /* the real hinge: lid_close.png's
+      bottom-left corner, from its alpha bounding box — stays (relatively)
+      fixed while the lid rotates around it */
+  }
+  /* Base translate derived by rotating lid_close.png -170deg about the
+     hinge in Python and measuring the bbox center vs. close_target.svg's
+     center; nudged slightly lower/left from there by eye. */
+  @keyframes lid-swing-open {
+    from { transform: translate(0%, 0%) rotate(0deg); }
+    to   { transform: translate(1.9%, -1.5%) rotate(-170deg); }
+  }
+  @keyframes lid-swing-close {
+    from { transform: translate(1.9%, -1.5%) rotate(-170deg); }
+    to   { transform: translate(0%, 0%) rotate(0deg); }
+  }
+  /* Instant show/hide, not a fade: a 0.1%-wide gap (not the exact same
+     percentage twice — some browsers silently drop an exact duplicate
+     and ease-interpolate across the whole range instead) makes the jump
+     effectively instant without relying on duplicate-keyframe handling. */
+  @keyframes hinge-reveal-open {
+    0%    { opacity: 0; }
+    39.9% { opacity: 0; }
+    40%   { opacity: 1; }
+    100%  { opacity: 1; }
+  }
+  @keyframes hinge-reveal-close {
+    0%    { opacity: 1; }
+    49.9% { opacity: 1; }
+    50%   { opacity: 0; }
+    100%  { opacity: 0; }
+  }
+
+  /* Hotspots: invisible SVG shapes overlaid at the same canvas size so
+     they scale with the art regardless of display size. */
+  .hotspot-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 20; /* above the lid so clicks always land */
+  }
+  .hotspot-overlay rect,
+  .hotspot-overlay path {
+    /* Safari doesn't reliably hit-test fill:transparent as "painted" —
+       clicks fall through to the plain <svg> box behind it. A fill
+       that's technically nonzero (if visually indistinguishable from
+       transparent) hit-tests correctly everywhere. */
+    fill: rgba(0, 0, 0, 0.01);
+    cursor: pointer;
+  }
+  #wheelTarget { touch-action: none; } /* don't let a swipe scroll the page */
+
+  /* Only the target relevant to the current state is actually
+     clickable — openTarget/closeTarget's bounding boxes partly overlap,
+     so without this the wrong (but still hit-testable) shape could eat
+     a click meant for the other, even though its handler would've
+     no-op'd anyway. */
+  #closeTarget, #wheelTarget { pointer-events: none; }
+  #lighter.is-open #openTarget { pointer-events: none; }
+  #lighter.is-open #closeTarget, #lighter.is-open #wheelTarget { pointer-events: all; }
+
+  hr { border: none; border-top: 1px solid #333; margin: 2rem 0; }
+  .debug-label { opacity: 0.5; font-size: 0.85rem; }
 </style>
 </head>
 <body>
   <script src="../shared/home-button.js"></script>
   <h1>spark</h1>
-  <p>Test harness — the real UI (lighter image + gesture to light) comes later.</p>
+
+  <div id="lighter">
+    <img id="bodyImg" src="assets/body.png" alt="lighter body" draggable="false" />
+    <img id="hingeImg" src="assets/hinge.png" alt="" draggable="false" />
+    <img id="flameImg" src="assets/flame1.png" alt="flame" draggable="false" />
+    <img id="lidImg" src="assets/lid_close.png" alt="lid" draggable="false" />
+
+    <!-- All three hotspots share ONE svg box. Three separate <svg>
+         wrappers used to each intercept clicks across their FULL canvas
+         area regardless of child pointer-events (that was the actual
+         bug) — a single wrapper means there's only one box, and child-
+         level pointer-events/fill correctly gate which shape responds. -->
+    <svg class="hotspot-overlay" viewBox="0 0 2476 2556" preserveAspectRatio="xMidYMid meet">
+      <!-- Closed-state target: click to open. From open_target.svg. -->
+      <rect id="openTarget" x="1308.98" y="798.041" width="1117.24" height="671.99" transform="rotate(0.358045 1308.98 798.041)" />
+      <!-- Open-state target: click to close. From close_target.svg. -->
+      <rect id="closeTarget" x="238.318" y="1109" width="1108.22" height="653.375" transform="rotate(16.9448 238.318 1109)" />
+      <!-- Flint wheel: press and swipe down to light. Only live once open. -->
+      <g clip-path="url(#wheelClip)">
+        <path id="wheelTarget" d="M2135.77 1019C2222.61 1019 2293 1087.02 2293 1170.92C2293 1220.95 2267.98 1265.32 2229.37 1293C2228.4 1292.34 2227.38 1291.73 2226.31 1291.19C2225.35 1290.71 2224.37 1290.24 2222.51 1289.45C2222.13 1289.29 2221.68 1289.1 2221.32 1288.95C2220.93 1288.79 2220.55 1288.63 2220.18 1288.47C2219.4 1288.14 2218.79 1287.87 2218.36 1287.67C2218.03 1287.51 2217.93 1287.46 2217.87 1287.42C2217.78 1287.36 2217.49 1287.19 2216.83 1286.72C2215.7 1285.92 2214.52 1285.22 2213.31 1284.62C2213.19 1284.03 2213.06 1283.45 2212.9 1282.87L2212.74 1282.3L2212.48 1281.45C2210.16 1273.91 2206.94 1268.12 2203.98 1263.78C2206.44 1250.68 2208.42 1239.87 2209.85 1231.87C2213.99 1227.37 2217.01 1223.35 2218.59 1221.37C2225.65 1212.54 2230.04 1203.2 2233.2 1193.83C2237.28 1181.71 2236.79 1168.45 2235.8 1159.39C2234.75 1149.71 2232.61 1140.45 2230.52 1134.29C2223.34 1113.08 2210.12 1101.38 2204.4 1095.7C2194.23 1085.57 2190.44 1080.75 2186.09 1075.12C2183.08 1071.22 2179.7 1067.43 2177.39 1064.77C2174.79 1061.78 2173 1059.63 2171.58 1057.61C2162.67 1044.88 2151.61 1037.73 2144.15 1032.47C2137.37 1027.68 2131.53 1023.54 2126.68 1020.42C2126.13 1020.06 2125.57 1019.71 2125 1019.35C2128.56 1019.12 2132.15 1019 2135.77 1019Z" />
+      </g>
+      <defs>
+        <clipPath id="wheelClip"><rect width="2476" height="2556" fill="white"/></clipPath>
+      </defs>
+    </svg>
+  </div>
+
+  <hr />
+  <p class="debug-label">Debug harness — backend testing until the final UI polish lands.</p>
   <label>Worker URL: <input id="base" value="https://spark-lighter.luka-msherman.workers.dev" /></label>
-
-  <div id="flame">🔒</div>
-
   <div>
     <button id="btnState">refresh state</button>
     <button id="btnLight">light</button>
     <button id="btnExtinguish">extinguish</button>
     <button id="btnRefill">refill</button>
   </div>
-
   <pre id="out">(no data yet)</pre>
 
   <script>
     const $ = (id) => document.getElementById(id);
     const base = () => $("base").value.replace(/\/$/, "");
 
+    // --- flame flicker: random frame every ~90-170ms while lit ---
+    const FLAME_FRAMES = ["assets/flame1.png", "assets/flame2.png", "assets/flame3.png"];
+    let flameTimer = null;
+    function startFlameFlicker() {
+      if (flameTimer) return;
+      const img = $("flameImg");
+      img.style.display = "block";
+      (function tick() {
+        let next;
+        do {
+          next = FLAME_FRAMES[Math.floor(Math.random() * FLAME_FRAMES.length)];
+        } while (next === img.getAttribute("src") && FLAME_FRAMES.length > 1);
+        img.src = next;
+        flameTimer = setTimeout(tick, 90 + Math.random() * 80);
+      })();
+    }
+    function stopFlameFlicker() {
+      clearTimeout(flameTimer);
+      flameTimer = null;
+      $("flameImg").style.display = "none";
+    }
+
+    let isOpen = false; // drives which hotspot currently responds
+
     function render(data) {
       $("out").textContent = JSON.stringify(data, null, 2);
-      $("flame").textContent = data.lit ? "🔥" : (data.fuelSeconds === 0 ? "🪫" : "🔒");
+      if (data && typeof data.lit === "boolean") {
+        if (data.lit) startFlameFlicker();
+        else stopFlameFlicker();
+      }
     }
 
     async function call(path, method = "GET") {
@@ -42,6 +188,7 @@
         const res = await fetch(base() + path, { method });
         const data = await res.json();
         render({ status: res.status, ...data });
+        return data;
       } catch (err) {
         $("out").textContent = "Error: " + err.message + "\n\n(Check the Worker URL, and that this page's origin is allowed by ALLOWED_ORIGIN.)";
       }
@@ -52,9 +199,77 @@
     $("btnExtinguish").onclick = () => call("/extinguish", "POST");
     $("btnRefill").onclick = () => call("/refill", "POST");
 
-    // Poll every second so the fuel readout visibly ticks down while lit.
+    // Poll every second so the debug readout (and flame flicker) stay live.
     setInterval(() => call("/state"), 1000);
     call("/state");
+
+    function playLidSwing(name) {
+      const lid = $("lidImg");
+      const hinge = $("hingeImg");
+      // Opening: slow start, fast finish (ease-in). Closing: fast start,
+      // slow finish (ease-out) — the reverse feel, not just reversed keyframes.
+      const easing = name === "lid-swing-open" ? "ease-in" : "ease-out";
+      const hingeAnim = name === "lid-swing-open" ? "hinge-reveal-open" : "hinge-reveal-close";
+      lid.style.animation = "none";
+      hinge.style.animation = "none";
+      void lid.offsetWidth; // force reflow so the restart actually takes
+      lid.style.animation = `${name} 0.45s ${easing} forwards`;
+      // Same duration/easing as the lid so "20%"/"50%" line up with the
+      // lid's actual time-through-animation, not just wall-clock guessing.
+      hinge.style.animation = `${hingeAnim} 0.45s ${easing} forwards`;
+    }
+
+    // Open/close is purely the lid mechanic (matches a real Zippo: flipping
+    // the lid open doesn't light it, you still have to strike the wheel).
+    // Closing *does* smother any active flame, so it also extinguishes.
+    $("openTarget").addEventListener("click", () => {
+      console.log("[spark] open target clicked, isOpen:", isOpen);
+      if (isOpen) return;
+      isOpen = true;
+      $("lighter").classList.add("is-open");
+      playLidSwing("lid-swing-open");
+    });
+    $("closeTarget").addEventListener("click", () => {
+      console.log("[spark] close target clicked, isOpen:", isOpen);
+      if (!isOpen) return;
+      isOpen = false;
+      $("lighter").classList.remove("is-open");
+      playLidSwing("lid-swing-close");
+      // Stop the flame immediately client-side rather than waiting up to
+      // 1s for the next /state poll to come back with lit:false.
+      stopFlameFlicker();
+      call("/extinguish", "POST");
+    });
+
+    // Diagnostic: logs exactly what element received a click anywhere on
+    // the lighter, so a "nothing's clickable" report is easy to pin down
+    // (safe to remove once the real UI is settled).
+    $("lighter").addEventListener("click", (e) => {
+      console.log("[spark] lighter click target:", e.target.id || e.target.tagName, "at", e.offsetX, e.offsetY);
+    });
+
+    // Striking the wheel: press on it and swipe down past a threshold to
+    // light. Gated by isOpen since the wheel's only reachable once open.
+    const wheelTarget = $("wheelTarget");
+    const SWIPE_DOWN_FRACTION = 0.06; // of the lighter's rendered height
+    let swipeStartY = null;
+
+    wheelTarget.addEventListener("pointerdown", (e) => {
+      if (!isOpen) return;
+      swipeStartY = e.clientY;
+      wheelTarget.setPointerCapture(e.pointerId);
+    });
+    wheelTarget.addEventListener("pointerup", (e) => {
+      if (swipeStartY === null) return;
+      const deltaY = e.clientY - swipeStartY;
+      swipeStartY = null;
+      const threshold = $("lighter").getBoundingClientRect().height * SWIPE_DOWN_FRACTION;
+      console.log("[spark] wheel swipe deltaY:", deltaY, "threshold:", threshold);
+      if (deltaY > threshold) call("/light", "POST");
+    });
+    wheelTarget.addEventListener("pointercancel", () => {
+      swipeStartY = null;
+    });
   </script>
 </body>
 </html>
