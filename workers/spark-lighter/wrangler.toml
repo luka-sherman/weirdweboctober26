@@ -1,0 +1,17 @@
+name = "spark-lighter"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Only the deployed site is allowed to drive this lighter from a browser.
+# Overridden to "*" for local dev via .dev.vars (gitignored).
+ALLOWED_ORIGIN = "https://looka.click"
+
+[[durable_objects.bindings]]
+name = "LIGHTER"
+class_name = "Lighter"
+
+# Free-plan accounts must use SQLite-backed Durable Objects.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Lighter"]

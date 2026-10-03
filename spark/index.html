@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>spark</title>
+<style>
+  body { font-family: monospace; background: #111; color: #eee; padding: 2rem; }
+  button { font-size: 1rem; padding: 0.6rem 1.2rem; margin-right: 0.5rem; margin-bottom: 1rem; cursor: pointer; }
+  #flame { font-size: 3rem; }
+  pre { background: #000; color: #0f0; padding: 1rem; border-radius: 6px; max-width: 500px; white-space: pre-wrap; }
+  input { font-family: monospace; padding: 0.3rem; width: 320px; }
+</style>
+</head>
+<body>
+  <script src="../shared/home-button.js"></script>
+  <h1>spark</h1>
+  <p>Test harness — the real UI (lighter image + gesture to light) comes later.</p>
+  <label>Worker URL: <input id="base" value="https://spark-lighter.luka-msherman.workers.dev" /></label>
+
+  <div id="flame">🔒</div>
+
+  <div>
+    <button id="btnState">refresh state</button>
+    <button id="btnLight">light</button>
+    <button id="btnExtinguish">extinguish</button>
+    <button id="btnRefill">refill</button>
+  </div>
+
+  <pre id="out">(no data yet)</pre>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const base = () => $("base").value.replace(/\/$/, "");
+
+    function render(data) {
+      $("out").textContent = JSON.stringify(data, null, 2);
+      $("flame").textContent = data.lit ? "🔥" : (data.fuelSeconds === 0 ? "🪫" : "🔒");
+    }
+
+    async function call(path, method = "GET") {
+      try {
+        const res = await fetch(base() + path, { method });
+        const data = await res.json();
+        render({ status: res.status, ...data });
+      } catch (err) {
+        $("out").textContent = "Error: " + err.message + "\n\n(Check the Worker URL, and that this page's origin is allowed by ALLOWED_ORIGIN.)";
+      }
+    }
+
+    $("btnState").onclick = () => call("/state");
+    $("btnLight").onclick = () => call("/light", "POST");
+    $("btnExtinguish").onclick = () => call("/extinguish", "POST");
+    $("btnRefill").onclick = () => call("/refill", "POST");
+
+    // Poll every second so the fuel readout visibly ticks down while lit.
+    setInterval(() => call("/state"), 1000);
+    call("/state");
+  </script>
+</body>
+</html>
