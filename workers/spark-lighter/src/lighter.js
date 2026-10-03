@@ -215,9 +215,11 @@ export class Lighter {
       const blocked = await this.guard(request, ip, now);
       if (blocked) return blocked;
 
+      // Top-ups allowed below 99% — just not when it's already basically full.
       const fuelSeconds = this.currentFuelSeconds(now, viewerCount);
-      if (fuelSeconds > 0) {
-        return json({ error: "not_empty", ...this.publicState(now, viewerCount) }, 409, this.env);
+      const fuelPercent = (fuelSeconds / FULL_TANK_BURN_SECONDS) * 100;
+      if (fuelPercent >= 99) {
+        return json({ error: "already_full", ...this.publicState(now, viewerCount) }, 409, this.env);
       }
 
       this.fuelSeconds = FULL_TANK_BURN_SECONDS;

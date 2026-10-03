@@ -2,8 +2,12 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>spark</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Looka | Share my lighter</title>
+<meta name="description" content="Open and spark my Zippo. The fuel is a communal reservoir that anyone can refill." />
+<link rel="preload" as="fetch" href="https://octothorp.es/?uri=">
 <link rel="octo:octothorpes" href="Spark">
+<script src="https://octothorp.es/linkfill.js"></script>
 <style>
   body {
     box-sizing: border-box;
@@ -186,25 +190,31 @@
     /* buttons don't inherit the page font by default in most browsers'
        UA stylesheets — set explicitly to match "spark" above. */
     font-family: monospace;
-    font-size: 0.9rem;
+    font-size: 1rem; /* ≥16px — below that, iOS Safari auto-zooms the
+      page on tap to make a focused form control legible */
     padding: 0.4rem 0.9rem;
-    background: #3a3a3a;
-    color: #777;
+    background: #7a2a0c; /* bottom of the fuel gradient */
+    color: #eee;
     border: none;
     border-radius: 4px;
     font-weight: bold;
-    cursor: not-allowed;
-    transition: background 0.2s ease, color 0.2s ease;
-  }
-  /* Only clickable/colored once fuel is actually empty — real :disabled,
-     not just a visual style, so it can't be clicked or tabbed to otherwise. */
-  #btnRefillLive:not(:disabled) {
-    background: #ff8a3d;
-    color: #111;
     cursor: pointer;
+    transition: background 0.2s ease;
+    /* The real fix for the zoom: iOS's double-tap-to-zoom gesture
+       detection can misfire when a tap synchronously changes this
+       button's text/disabled state mid-gesture. This disables that
+       specific gesture on the button without touching the user's own
+       pinch-zoom elsewhere on the page. */
+    touch-action: manipulation;
   }
-  #btnRefillLive:not(:disabled):hover {
-    background: #ffa868;
+  #btnRefillLive:hover {
+    background: #ff8a3d; /* top of the fuel gradient */
+    color: #111;
+  }
+  #btnRefillLive:disabled {
+    background: #3a3a3a;
+    color: #777;
+    cursor: default;
   }
 </style>
 </head>
@@ -246,8 +256,8 @@
         <span id="fuelLabel">--%</span>
       </div>
     </div>
-    <button id="btnRefillLive" disabled title="can't refill until empty">refill lighter fluid</button>
-    <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
+    <button id="btnRefillLive">refill lighter fluid</button>
+    <p class="status-note">last refilled: <span id="lastRefillText">--</span></p>
     <p class="status-note">lighters burning now: <span id="viewerCountText">1</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
@@ -273,6 +283,7 @@
     // Worker can tell how many distinct tabs/visitors are currently
     // around — reuses requests already being made, no extra traffic.
     const viewerId = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36));
+    const pageLoadTime = Date.now(); // fallback shown as "last refilled" if it's genuinely never been refilled
 
     // --- flame flicker: random frame every ~90-170ms while lit ---
     const FLAME_FRAMES = ["assets/flame1.png", "assets/flame2.png", "assets/flame3.png"];
@@ -351,23 +362,24 @@
         if (data.lit && isOpen) startFlameFlicker();
         else stopFlameFlicker();
       }
-      if (data && typeof data.fuelPercent === "number") {
+      // Skipped entirely while a refill animation owns the bar (see
+      // btnRefillLive's click handler) — otherwise the 100ms ticker would
+      // fight that animation by resetting height back to the real,
+      // not-yet-refilled percent on every tick.
+      if (data && typeof data.fuelPercent === "number" && !refillPending) {
         const pct = Math.max(0, Math.min(100, data.fuelPercent)) + "%";
         $("fuelFill").style.height = pct;
         $("fuelIndicator").style.bottom = pct; // line + label ride the fill level
         $("fuelLabel").textContent = data.fuelPercent.toFixed(2) + "%";
-        // The Worker only accepts /refill once fuelSeconds is actually 0 —
-        // match that exactly rather than a rounded/near-zero percent.
-        const empty = data.fuelSeconds <= 0;
-        $("btnRefillLive").disabled = !empty;
-        // Native title attribute = a real hover tooltip, no custom popup
-        // needed. Only set while disabled, so it doesn't show once usable.
-        $("btnRefillLive").title = empty ? "" : "can't refill until empty";
+        // Matches the Worker's own gate — refill only accepted below 99%.
+        const alreadyFull = data.fuelPercent >= 99;
+        $("btnRefillLive").disabled = alreadyFull;
+        $("btnRefillLive").title = alreadyFull ? "already basically full" : "";
       }
       if (data && "lastRefill" in data) {
-        $("lastRefillText").textContent = data.lastRefill
-          ? formatRefillTime(data.lastRefill.timestamp)
-          : "never";
+        $("lastRefillText").textContent = formatRefillTime(
+          data.lastRefill ? data.lastRefill.timestamp : pageLoadTime
+        );
       }
       if (data && typeof data.viewerCount === "number") {
         // The server's viewerCount is just "tabs currently open" — only
@@ -428,8 +440,10 @@
         return localPublicState(now);
       }
       if (path === "/refill" && method === "POST") {
+        // Top-ups allowed below 99% — just not when already basically full.
         const fuelSeconds = localCurrentFuelSeconds(now);
-        if (fuelSeconds > 0) return { error: "not_empty", ...localPublicState(now) };
+        const fuelPercent = (fuelSeconds / localState.fullTankBurnSeconds) * 100;
+        if (fuelPercent >= 99) return { error: "already_full", ...localPublicState(now) };
         localState.fuelSeconds = localState.fullTankBurnSeconds;
         localState.lit = false;
         localState.litAt = null;
@@ -476,7 +490,50 @@
     $("btnLight").onclick = () => call("/light", "POST");
     $("btnExtinguish").onclick = () => call("/extinguish", "POST");
     $("btnRefill").onclick = () => call("/refill", "POST");
-    $("btnRefillLive").onclick = () => call("/refill", "POST");
+    // Clicking doesn't hit the server immediately — the bar visibly fills
+    // to the top first (owning the bar while refillPending, see render()
+    // above), and the real request only fires once that completes.
+    // Blunts spam-clicking: repeat clicks during the animation are
+    // ignored outright, so it fires exactly once.
+    const REFILL_ANIMATION_MS = 1250;
+    let refillPending = false;
+    $("btnRefillLive").onclick = () => {
+      if (refillPending) return;
+      refillPending = true;
+      const btn = $("btnRefillLive");
+      const originalText = btn.textContent;
+      // Explicitly drop focus before disabling/relabeling — otherwise
+      // mobile Safari can keep re-evaluating its zoom-to-focused-control
+      // heuristic as the button's disabled state and text keep changing
+      // for the next ~1.25s, making the zoom creep further in over time.
+      btn.blur();
+      btn.disabled = true;
+      btn.textContent = "refilling...";
+
+      // Driven by JS, not a CSS transition, so the percentage label can
+      // tick up in step with the bar instead of sitting frozen/stale
+      // until the server responds.
+      const startPercent = Math.max(0, Math.min(100, parseFloat($("fuelLabel").textContent) || 0));
+      const startTime = Date.now();
+      const tween = setInterval(() => {
+        const fraction = Math.min(1, (Date.now() - startTime) / REFILL_ANIMATION_MS);
+        const pct = startPercent + (100 - startPercent) * fraction;
+        $("fuelFill").style.height = pct + "%";
+        $("fuelIndicator").style.bottom = pct + "%";
+        $("fuelLabel").textContent = pct.toFixed(2) + "%";
+        if (fraction >= 1) {
+          clearInterval(tween);
+          // refillPending stays true until the request actually resolves
+          // — clearing it earlier would let the ticker flash the bar
+          // back down to the stale pre-refill percent for a tick or two.
+          call("/refill", "POST").finally(() => {
+            refillPending = false;
+            btn.disabled = false;
+            btn.textContent = originalText;
+          });
+        }
+      }, 100);
+    };
 
     // Real fetch on load, then every 15s to catch up with other visitors'
     // actions — the 100ms ticker in between still comes from local math,
