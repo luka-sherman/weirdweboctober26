@@ -163,8 +163,8 @@
     background: linear-gradient(0deg, #7a2a0c, #ff8a3d);
     transition: height 0.3s ease;
   }
-  /* The moving line + label: positioned by `bottom` (set in JS, same %
-     as fuelFill's height) and centered on that point via translateY. */
+  /* The moving label: positioned by `bottom` (set in JS, same % as
+     fuelFill's height) and centered on that point via translateY. */
   #fuelIndicator {
     position: absolute;
     left: 0;
@@ -172,16 +172,9 @@
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 0.6rem; /* label sits a bit further right of the bar */
     transform: translateY(50%);
     pointer-events: none;
     transition: bottom 0.3s ease;
-  }
-  #fuelTick {
-    width: 1rem;
-    height: 2px;
-    background: #ff8a3d;
-    flex: none;
   }
   #fuelLabel {
     font-family: monospace; /* same as "spark" above, which inherits it
@@ -189,6 +182,7 @@
     font-size: 0.7rem;
     opacity: 0.85;
     white-space: nowrap;
+    margin-left: 1.6rem; /* clears the bar's width now there's no tick */
   }
   #btnRefillLive {
     /* buttons don't inherit the page font by default in most browsers'
@@ -251,7 +245,6 @@
     <div id="fuelBarWrap">
       <div id="fuelBar"><div id="fuelFill"></div></div>
       <div id="fuelIndicator">
-        <span id="fuelTick"></span>
         <span id="fuelLabel">--%</span>
       </div>
     </div>
