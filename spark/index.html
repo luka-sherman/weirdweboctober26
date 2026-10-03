@@ -249,8 +249,7 @@
       </div>
     </div>
     <button id="btnRefillLive" disabled>refill</button>
-    <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
-    <p class="status-note">lighters burning now: <span id="burningCount">0</span><span id="offlineNote" hidden> (currently offline)</span></p>
+    <p class="status-note">last refilled: <span id="lastRefillText">never</span><span id="offlineNote" hidden> (currently offline)</span></p>
   </div>
   </div>
 
@@ -353,9 +352,6 @@
         // The Worker only accepts /refill once fuelSeconds is actually 0 —
         // match that exactly rather than a rounded/near-zero percent.
         $("btnRefillLive").disabled = data.fuelSeconds > 0;
-      }
-      if (data && typeof data.lit === "boolean") {
-        $("burningCount").textContent = data.lit ? "1" : "0";
       }
       if (data && "lastRefill" in data) {
         $("lastRefillText").textContent = data.lastRefill
