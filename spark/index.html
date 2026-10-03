@@ -104,6 +104,7 @@
 
   hr { border: none; border-top: 1px solid #333; margin: 2rem 0; }
   .debug-label { opacity: 0.5; font-size: 0.85rem; }
+  .status-note { opacity: 0.6; font-size: 0.85rem; margin: 0.3rem 0; }
 
   #lighterRow {
     display: flex;
@@ -247,6 +248,10 @@
   </div>
   <pre id="out">(no data yet)</pre>
 
+  <hr />
+  <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
+  <p class="status-note">lighters burning now: <span id="burningCount">0</span></p>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const base = () => $("base").value.replace(/\/$/, "");
@@ -275,6 +280,19 @@
 
     let isOpen = false; // drives which hotspot currently responds
 
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    function formatRefillTime(ms) {
+      const d = new Date(ms);
+      const pad = (n) => String(n).padStart(2, "0");
+      // No explicit timeZone given to Intl, so it (like Date's own
+      // getters below) defaults to the viewer's own local time zone.
+      const tz = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" })
+        .formatToParts(d)
+        .find((p) => p.type === "timeZoneName").value;
+      return `${MONTHS[d.getMonth()]} ${pad(d.getDate())} ${d.getFullYear()}, `
+        + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tz}`;
+    }
+
     function render(data) {
       $("out").textContent = JSON.stringify(data, null, 2);
       if (data && typeof data.lit === "boolean") {
@@ -289,6 +307,14 @@
         // The Worker only accepts /refill once fuelSeconds is actually 0 —
         // match that exactly rather than a rounded/near-zero percent.
         $("btnRefillLive").disabled = data.fuelSeconds > 0;
+      }
+      if (data && typeof data.lit === "boolean") {
+        $("burningCount").textContent = data.lit ? "1" : "0";
+      }
+      if (data && "lastRefill" in data) {
+        $("lastRefillText").textContent = data.lastRefill
+          ? formatRefillTime(data.lastRefill.timestamp)
+          : "never";
       }
     }
 
