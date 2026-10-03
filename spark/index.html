@@ -4,7 +4,22 @@
 <meta charset="utf-8" />
 <title>spark</title>
 <style>
-  body { font-family: monospace; background: #111; color: #eee; padding: 2rem; }
+  body {
+    box-sizing: border-box;
+    margin: 0;
+    font-family: monospace;
+    background: #111;
+    color: #eee;
+    padding: 2rem;
+    min-height: 100vh; /* so there's room to center within, not just
+      the content's own height */
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* centers each child as a block; #lighterRow
+      keeps its own internal flex-row layout (lighter + fuel side by side) */
+    justify-content: center; /* vertical centering */
+    text-align: center;
+  }
   button { font-size: 1rem; padding: 0.6rem 1.2rem; margin-right: 0.5rem; margin-bottom: 1rem; cursor: pointer; }
   pre { background: #000; color: #0f0; padding: 1rem; border-radius: 6px; max-width: 500px; white-space: pre-wrap; }
   input { font-family: monospace; padding: 0.3rem; width: 320px; }
@@ -108,7 +123,9 @@
 
   #lighterRow {
     display: flex;
-    align-items: stretch; /* fuelColumn matches #lighter's rendered height */
+    align-items: flex-start; /* fuelColumn is now taller than #lighter
+      (bar matches it, but button + status hang below), so it shouldn't
+      be stretched to the row's height */
     gap: 3rem;
   }
   #fuelColumn {
@@ -116,14 +133,16 @@
     flex-direction: column;
     align-items: center;
     gap: 0.6rem;
-    width: 5rem; /* room for the label beside the bar */
+    /* no fixed width — sized by its widest child (now the status-note
+       text), while #fuelBarWrap below keeps the bar itself narrow */
   }
-  /* Wrapper is the thing that's flex:1 and overflow:visible — #fuelBar
-     itself needs overflow:hidden (to clip the fill's rounded corners),
-     which would also clip the indicator label if it lived inside. */
+  /* Wrapper is the thing with overflow:visible — #fuelBar itself needs
+     overflow:hidden (to clip the fill's rounded corners), which would
+     also clip the indicator label if it lived inside. Height is set in
+     JS to match #lighter's actual rendered height exactly; button and
+     status note stack below it rather than sharing that height. */
   #fuelBarWrap {
     position: relative;
-    flex: 1;
     width: 1rem;
   }
   #fuelBar {
@@ -196,7 +215,7 @@
 </head>
 <body>
   <script src="../shared/home-button.js"></script>
-  <h1>spark</h1>
+  <h1 hidden>spark</h1>
 
   <div id="lighterRow">
   <div id="lighter">
@@ -234,6 +253,8 @@
       </div>
     </div>
     <button id="btnRefillLive" disabled>refill</button>
+    <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
+    <p class="status-note">lighters burning now: <span id="burningCount">0</span></p>
   </div>
   </div>
 
@@ -249,9 +270,6 @@
     </div>
     <pre id="out">(no data yet)</pre>
   </div>
-
-  <p class="status-note">last refilled: <span id="lastRefillText">never</span></p>
-  <p class="status-note">lighters burning now: <span id="burningCount">0</span></p>
 
   <script>
     const $ = (id) => document.getElementById(id);
@@ -278,6 +296,37 @@
       flameTimer = null;
       $("flameImg").style.display = "none";
     }
+
+    // "#2 SPARK" badge immediately after "weird web october", same
+    // font/size. Page-specific — doesn't touch shared/home-button.js,
+    // which every other day page also uses as-is.
+    function addDayBadge() {
+      const homeLink = document.querySelector(".weird-web-home");
+      if (!homeLink) return;
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "position:fixed; top:1rem; left:1rem; display:flex; align-items:baseline; gap:0.5rem; z-index:1000;";
+      homeLink.parentNode.insertBefore(wrap, homeLink);
+      homeLink.style.position = "static"; // now flows inside wrap instead of its own fixed position
+      wrap.appendChild(homeLink);
+      const badge = document.createElement("span");
+      badge.textContent = "#2 SPARK";
+      badge.style.cssText = 'font-family:"Creepster", cursive; font-size:clamp(1rem, 2.5vw, 1.4rem); color:#eee; letter-spacing:0.02em; opacity:0.85;';
+      wrap.appendChild(badge);
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", addDayBadge);
+    } else {
+      addDayBadge();
+    }
+
+    // Pin the fuel bar's height to #lighter's actual rendered height
+    // (aspect-ratio-driven, so not a fixed CSS value) — button and
+    // status note stack below it instead of sharing that height.
+    function syncFuelBarHeight() {
+      $("fuelBarWrap").style.height = $("lighter").getBoundingClientRect().height + "px";
+    }
+    syncFuelBarHeight();
+    window.addEventListener("resize", syncFuelBarHeight);
 
     let isOpen = false; // drives which hotspot currently responds
 
