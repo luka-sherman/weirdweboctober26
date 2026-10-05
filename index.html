@@ -80,6 +80,8 @@
     flex: none;
     padding: 0.5rem 0 0;
     gap: 2px;
+    position: relative;
+    z-index: 2;
   }
   .weekdays div {
     text-align: center;
@@ -273,7 +275,7 @@
       <a class="intro-link" href="https://weirdweboctober.website" target="_blank" rel="noopener noreferrer">Communal guidelines</a>
       <a class="intro-link" href="https://weirdweboctober.website/browse.html" target="_blank" rel="noopener noreferrer">See other's work</a>
       <h2>Why?</h2>
-      <p>Bringing back the WEIRD WEB, when people just put fun and silly stuff on the internet, not for followers or likes but just for the joy of making something and sharing it.</p>
+      <p>Bringing back the weird, when people put fun and silly stuff on the internet, not for followers or likes but just for the joy of making something and sharing it.</p>
     </div>
   `;
 
@@ -334,6 +336,21 @@
     });
   }
 
+  // October's first week has empty cells under Sun-Wed, so those weekday
+  // headers float above nothing. Drop just those headers down to sit
+  // right above row 2, where those columns get their first real day.
+  const weekdayHeaders = document.querySelectorAll(".weekdays > div");
+
+  function positionWeekdayHeaders() {
+    const numRows = Math.ceil((firstWeekday + daysInMonth) / 7);
+    const rowHeight = calendar.clientHeight / numRows;
+    weekdayHeaders.forEach((el, i) => {
+      el.style.transform = i < firstWeekday ? `translateY(${rowHeight}px)` : "";
+    });
+  }
+
+  positionWeekdayHeaders();
+
   // Shrink or grow each day's word to best fill its cell, since word
   // length varies a lot and Nosifer's glyphs are unusually wide.
   // Measured with a real hidden DOM span (not canvas) so it matches
@@ -378,12 +395,18 @@
 
   fitWordText();
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(fitWordText);
+    document.fonts.ready.then(() => {
+      fitWordText();
+      positionWeekdayHeaders();
+    });
   }
   let resizeTimer;
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(fitWordText, 100);
+    resizeTimer = setTimeout(() => {
+      fitWordText();
+      positionWeekdayHeaders();
+    }, 100);
   });
 </script>
 </body>
