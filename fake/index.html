@@ -74,35 +74,18 @@
 
     <script>
       (function () {
-        // generous overcount so the units fill the viewport on any screen size;
-        // extras just overflow and get clipped by #links' overflow:hidden
-        var count = 500;
         var container = document.getElementById("links");
-        // index 0 is the first unit (top-left); never let the real link land there
-        var realIndex = 1 + Math.floor(Math.random() * (count - 1));
-        var fakeClicks = 0;
-        var hintAfter = 10;
-        var realLink = null;
+        var links = [];
 
-        for (var i = 0; i < count; i++) {
+        // keep appending units only while they still fit the visible viewport;
+        // this guarantees every unit on the page is actually visible and clickable
+        for (var i = 0; i < 2000; i++) {
           var unit = document.createElement("div");
           unit.className = "unit";
 
-          var link = document.createElement(i === realIndex ? "a" : "span");
+          var link = document.createElement("a");
           link.className = "weird-link";
           link.textContent = "Weird Web October";
-
-          if (i === realIndex) {
-            link.href = "../";
-            realLink = link;
-          } else {
-            link.addEventListener("click", function () {
-              fakeClicks++;
-              if (fakeClicks >= hintAfter && realLink) {
-                realLink.classList.add("hint");
-              }
-            });
-          }
 
           var label = document.createElement("span");
           label.className = "day-label";
@@ -111,7 +94,33 @@
           unit.appendChild(link);
           unit.appendChild(label);
           container.appendChild(unit);
+
+          if (container.scrollHeight > container.clientHeight) {
+            container.removeChild(unit);
+            break;
+          }
+
+          links.push(link);
         }
+
+        // index 0 is the first unit (top-left); never let the real link land there
+        var realIndex = links.length > 1 ? 1 + Math.floor(Math.random() * (links.length - 1)) : 0;
+        var realLink = links[realIndex];
+        realLink.href = "../";
+
+        var fakeClicks = 0;
+        var hintAfter = 10;
+
+        links.forEach(function (link, i) {
+          if (i === realIndex) return;
+          link.addEventListener("click", function (e) {
+            e.preventDefault();
+            fakeClicks++;
+            if (fakeClicks >= hintAfter) {
+              realLink.classList.add("hint");
+            }
+          });
+        });
       })();
     </script>
 
