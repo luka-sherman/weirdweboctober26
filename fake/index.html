@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+
+  <head>
+      
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-VQGF0FSLK8"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-VQGF0FSLK8');
+    </script>
+
+    <title>Looka | Stay lost</title>
+    <meta name="description" content="Good luck">
+
+    <link rel="preload" as="fetch" href="https://octothorp.es/?uri=https://looka.click/weirdweboctober26/fake/">
+    <link rel="octo:octothorpes" href="weirdweboctober">
+    <link rel="octo:octothorpes" href="Fake">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Creepster&display=swap" rel="stylesheet">
+
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        overscroll-behavior: none;
+        background: #000;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+      }
+      #links {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        font-family: "Creepster", cursive;
+        font-size: clamp(0.9rem, 1.9vw, 1.3rem);
+        letter-spacing: 0.02em;
+      }
+      .unit {
+        display: inline-block;
+        white-space: nowrap;
+      }
+      .weird-link {
+        color: #eee;
+        text-decoration: none;
+        cursor: pointer;
+        transition: color 0.15s ease;
+      }
+      .weird-link.hint { color: #ffb366; }
+      .weird-link:hover { color: #ff8a3d; }
+      .day-label {
+        color: #fff;
+        margin-left: 0.3em;
+        margin-right: 0.3em;
+      }
+    </style>
+
+  </head>
+
+  <body>
+
+    <div id="links"></div>
+
+    <script>
+      (function () {
+        // generous overcount so the units fill the viewport on any screen size;
+        // extras just overflow and get clipped by #links' overflow:hidden
+        var count = 500;
+        var container = document.getElementById("links");
+        // index 0 is the first unit (top-left); never let the real link land there
+        var realIndex = 1 + Math.floor(Math.random() * (count - 1));
+        var fakeClicks = 0;
+        var hintAfter = 10;
+        var realLink = null;
+
+        for (var i = 0; i < count; i++) {
+          var unit = document.createElement("div");
+          unit.className = "unit";
+
+          var link = document.createElement(i === realIndex ? "a" : "span");
+          link.className = "weird-link";
+          link.textContent = "Weird Web October";
+
+          if (i === realIndex) {
+            link.href = "../";
+            realLink = link;
+          } else {
+            link.addEventListener("click", function () {
+              fakeClicks++;
+              if (fakeClicks >= hintAfter && realLink) {
+                realLink.classList.add("hint");
+              }
+            });
+          }
+
+          var label = document.createElement("span");
+          label.className = "day-label";
+          label.textContent = "3rd: Fake ...";
+
+          unit.appendChild(link);
+          unit.appendChild(label);
+          container.appendChild(unit);
+        }
+      })();
+    </script>
+
+  </body>
+
+</html>
